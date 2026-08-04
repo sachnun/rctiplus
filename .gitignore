@@ -1,0 +1,18 @@
+# reverse-engineering artifacts (downloaded JS bundles / HTML snapshots)
+c_*.js
+main.js
+webpack.js
+tv.js
+fw.js
+app.js
+jw.js
+desk*.html
+index*.html
+rcti.min.js
+myjs.js
+jwplayer-custom-button.js
+lazy/
+jsmap.txt
+*.log
+*.tmpreplay*.html
+cq.json
