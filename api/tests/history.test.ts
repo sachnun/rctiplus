@@ -83,15 +83,14 @@ function makeEnv(sparseFromDays = 0) {
 }
 
 describe('createHistoryService', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
   beforeEach(() => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string | URL | Request) => {
-        const s = String(url);
-        if (s.includes('gone')) return new Response('<!DOCTYPE html>', { status: 502 });
-        return new Response('#EXTM3U\n#EXT-X-VERSION:3\nhttps://cdn/x.m3u8\n');
-      }),
-    );
+    fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const s = String(url);
+      if (s.includes('gone')) return new Response('<!DOCTYPE html>', { status: 502 });
+      return new Response('#EXTM3U\n#EXT-X-VERSION:3\nhttps://cdn/x.m3u8\n');
+    });
+    vi.stubGlobal('fetch', fetchMock);
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -121,6 +120,14 @@ describe('createHistoryService', () => {
     const day = await service.fetchDay('2026-07-29');
     const channels = new Set(day.items.map((i) => i.channel));
     expect(channels).toEqual(new Set(CHANNELS));
+  });
+
+  it('skips CDN verification for recent days (zero CDN probes)', async () => {
+    const { service } = makeEnv();
+    const day = await service.fetchDay('2026-07-29', 'rcti'); // 7 days back
+    expect(day.items.length).toBeGreaterThan(0);
+    expect(day.items.every((i) => i.playable)).toBe(true);
+    expect(fetchMock.mock.calls.length).toBe(0);
   });
 
   it('marks items beyond the CDN retention as not playable', async () => {

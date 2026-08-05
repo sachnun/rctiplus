@@ -284,6 +284,14 @@ space (`api/src/history.ts`):
 - **Playability check**: each candidate's master is fetched from the CDN
   (with `Referer`); only `200` + `#EXTM3U` counts as playable.  This is what
   separates a resolvable URL from a deleted file (502).
+- **Recent-day fast path**: days younger than ~30 days skip the per-item CDN
+  probe (the CDN retains ~4 months, so those files are surely live) and reuse
+  the schedule scrape inside its 7-day window — common scroll pages load with
+  one id scan only.  Only days near the retention edge are still CDN-verified.
+- **Boundary cache**: the id→date boundary search result is cached per date
+  and seeded near the estimated id (`anchor.id - age*RATE_MAX`), so the
+  sequential binary-search probes shrink from the full 200-day span for
+  recent dates.
 - **Fast path**: dates inside the 7-day schedule window reuse the scrape
   instead of scanning (zero API load for the common case).
 - Dates closer than 7 days: `/history/day` returns instantly from the

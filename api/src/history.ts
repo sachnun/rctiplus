@@ -81,6 +81,14 @@ const SCAN_BEFORE = 10; // ids before the located date boundary
 const SCAN_AFTER = 210; // ids after it (sparse archive days span up to ~190 incl. gaps)
 
 /**
+ * Days for which a resolved EPG id is trusted without probing the CDN.
+ * The CDN retains ~4 months, so recent days are far inside the window and
+ * per-item CDN probes would only add latency to the common scroll path;
+ * only days near the retention edge are still verified.
+ */
+const RECENT_DAYS = 30;
+
+/**
  * Probe offsets, growing so a search can walk across the dead gaps that
  * appear in the archive region of the id space (older programs are pruned
  * from the API, leaving runs of 400s up to ~70 ids wide).
@@ -220,7 +228,20 @@ export function createHistoryService({
     anchor: { id: number; date: string },
     date: string,
   ): Promise<number> {
-    let lo = anchor.id - MAX_BACK_DAYS * RATE_MAX;
+    const key = `boundary:${date}`;
+    const cached = cache.get<number>(key, TTL.day);
+    if (cached !== undefined) return cached;
+
+    // Seed the low end from the estimated id for `date` instead of the full
+    // MAX_BACK_DAYS span: ids advance at most RATE_MAX/day, so the true
+    // boundary cannot sit below anchor.id - age*RATE_MAX - IDS_PER_DAY.
+    // That shrinks the search (and its sequential API probes) dramatically
+    // for recent dates — the common infinite-scroll case.
+    const age = daysBetween(date, anchor.date);
+    let lo = Math.max(
+      anchor.id - MAX_BACK_DAYS * RATE_MAX,
+      anchor.id - age * RATE_MAX - IDS_PER_DAY,
+    );
     let hi = anchor.id;
     while (lo < hi) {
       const mid = Math.floor((lo + hi) / 2);
@@ -232,6 +253,7 @@ export function createHistoryService({
       if ((info.details?.date ?? '') < date) lo = mid + 1;
       else hi = mid;
     }
+    cache.set(key, lo);
     return lo;
   }
 
@@ -253,28 +275,25 @@ export function createHistoryService({
     }
 
     // Fast path: dates inside the 7-day schedule window need no id-space scan
-    // (the schedule scrape already lists them, per channel).
+    // (the schedule scrape already lists them, per channel), and they are
+    // well inside CDN retention, so no per-item CDN probe either.
     if (channel && ageDays <= 6) {
       const sched = await schedule.fetchSchedule(channel);
-      const schedItems = sched.items.filter((it) => it.date === date);
-      const fast = await mapLimit(schedItems, 8, async (it) => {
-        let playable = false;
-        try {
-          playable = await verifyMaster((await api.resolveEpg(String(it.epg_id))).url);
-        } catch {
-          /* program vanished — keep playable=false */
-        }
-        return {
-          epg_id: it.epg_id,
-          title: it.title,
-          start: it.start,
-          end: it.end,
-          channel,
-          date,
-          url: it.url,
-          playable,
-        } satisfies DayItem;
-      });
+      const fast = sched.items
+        .filter((it) => it.date === date)
+        .map(
+          (it) =>
+            ({
+              epg_id: it.epg_id,
+              title: it.title,
+              start: it.start,
+              end: it.end,
+              channel,
+              date,
+              url: it.url,
+              playable: true,
+            }) satisfies DayItem,
+        );
       fast.sort((a, b) => a.start.localeCompare(b.start) || a.epg_id - b.epg_id);
       const fastResult: DayResult = { date, channel, generated_at: new Date().toISOString(), items: fast };
       cache.set(key, fastResult);
@@ -298,6 +317,10 @@ export function createHistoryService({
         !!r && r.details?.date === date && (!channel || r.details.channel === channel),
     );
 
+    // Days well inside the CDN retention window are trusted once the id
+    // resolves (probing the CDN per item is what makes first-browse pages
+    // slow).  Only days near the retention edge are still CDN-verified.
+    const verifyCdn = ageDays > RECENT_DAYS;
     const items = await mapLimit(candidates, 8, async (r) => {
       const d = r.details!;
       return {
@@ -308,7 +331,7 @@ export function createHistoryService({
         channel: d.channel,
         date: d.date,
         url: `/replay/${d.id}.m3u8`,
-        playable: await verifyMaster(r.url),
+        playable: verifyCdn ? await verifyMaster(r.url) : true,
       } satisfies DayItem;
     });
 
