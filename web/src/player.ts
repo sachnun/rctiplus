@@ -17,6 +17,7 @@ export class Player {
   private video: HTMLVideoElement;
   private events: PlayerEvents;
   private playing = false;
+  /** Only two modes now: HD ('best') first, 'auto' as fallback. */
   private quality: string = 'best';
   private currentPath: string | null = null;
   private currentLabel = '';
@@ -58,8 +59,10 @@ export class Player {
     return this.currentLabel;
   }
 
-  setQuality(q: string): void {
-    this.quality = q;
+  /** Retry once at 'auto' when the HD manifest cannot be loaded. */
+  private fallbackToAuto(): void {
+    if (this.quality === 'auto') return;
+    this.quality = 'auto';
     if (this.currentPath) this.play(this.currentPath, this.currentLabel);
   }
 
@@ -102,6 +105,7 @@ export class Player {
           data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT
         ) {
           this.events.status('buffering', 'Menunggu program berikutnya…');
+          this.fallbackToAuto();
           return;
         }
         if (

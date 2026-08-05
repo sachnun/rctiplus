@@ -49,14 +49,3 @@ export const api = {
     ),
 };
 
-export type Quality = 'best' | 'auto' | '720' | '480' | '360' | '240' | '144';
-
-export const QUALITIES: { value: Quality; label: string }[] = [
-  { value: 'best', label: 'Terbaik' },
-  { value: 'auto', label: 'Otomatis' },
-  { value: '720', label: '720p' },
-  { value: '480', label: '480p' },
-  { value: '360', label: '360p' },
-  { value: '240', label: '240p' },
-  { value: '144', label: '144p' },
-];

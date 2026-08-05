@@ -96,6 +96,27 @@ body.center-title .hud #now {
   padding-block: 0.625rem; /* matches the buttons' py-2.5 so they align */
 }
 
+/* ------------------------------------------------- side scrollbar
+   Minimal scrollbar for the jadwal sidebar: thin, subtle thumb that fades
+   in only while scrolling, no visible track. */
+.side-scroll {
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: rgba(255, 255, 255, 0.35) transparent;
+}
+.side-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.side-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+}
+.side-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.55);
+}
+.side-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 /* ------------------------------------------------------------- lists */
 .section-label {
   padding: 14px 16px 6px;

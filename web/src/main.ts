@@ -9,7 +9,7 @@
  */
 import './style.css';
 import { Player } from './player';
-import { api, QUALITIES, type Quality, type ScheduleItem } from './api';
+import { api, type ScheduleItem } from './api';
 
 /* ------------------------------------------------------------- shell */
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -41,17 +41,10 @@ app.innerHTML = `
 
   <aside id="side" aria-label="Menu"
     class="flex h-full w-80 max-w-[85vw] flex-col border-r border-white/10 bg-black">
-    <div class="overflow-y-auto flex-1 pb-2">
+    <div class="side-scroll overflow-y-auto flex-1 pb-2">
       <div id="channels"></div>
       <div class="section-label">Replay</div>
       <div id="replay"></div>
-    </div>
-    <div class="flex items-center justify-between border-t border-white/10 px-4 py-3">
-      <span class="text-[10px] uppercase tracking-[0.18em] text-white/35">Kualitas</span>
-      <select id="quality" class="focusable rounded-sm bg-transparent text-right text-sm
-        text-white/80 outline-none">
-        ${QUALITIES.map((q) => `<option value="${q.value}">${q.label}</option>`).join('')}
-      </select>
     </div>
   </aside>
 </div>
@@ -66,13 +59,11 @@ const fsBtn = document.getElementById('fs-btn') as HTMLButtonElement;
 const side = document.getElementById('side') as HTMLElement;
 const channelList = document.getElementById('channels') as HTMLDivElement;
 const replayList = document.getElementById('replay') as HTMLDivElement;
-const qualitySel = document.getElementById('quality') as HTMLSelectElement;
 
 /* ----------------------------------------------------------- state */
 let channels: string[] = [];
 let activeChannel = '';
 let activeEpgId: number | null = null;
-let quality: Quality = 'best';
 
 let sideOpen = false;
 let chromeTimer = 0;
@@ -500,10 +491,6 @@ async function loadReplay(channel: string): Promise<void> {
 }
 
 /* ------------------------------------------------------------- boot */
-qualitySel.addEventListener('change', () => {
-  quality = qualitySel.value as Quality;
-  player.setQuality(quality);
-});
 (async () => {
   try {
     const data = await api.channels();
