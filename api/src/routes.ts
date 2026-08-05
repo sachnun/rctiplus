@@ -8,16 +8,6 @@ import { unb64, type QualityFilter } from './hls.js';
 import type { ScheduleService } from './schedule.js';
 import type { HistoryService } from './history.js';
 import type { Config, ChannelSlug, ChannelId } from './config.js';
-import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { serveStatic } from '@hono/node-server/serve-static';
-
-/**
- * Production frontend: the built Vite app lives in `web/dist`; the API serves
- * it so a single port hosts the player, the JSON API and the HLS proxy.
- * In development the Vite dev server (port 5173) proxies to this API instead.
- */
-const WEB_DIST = fileURLToPath(new URL('../../web/dist', import.meta.url));
 
 /** Convert a non-304 ProxiedBody body to something Hono accepts. */
 function toBodyInit(
@@ -78,7 +68,9 @@ function qualityFilter(q: string | undefined): QualityFilter | undefined {
   return undefined;
 }
 
-export function registerRoutes(app: Hono, services: Services): void {
+export function registerRoutes<
+  E extends Record<string, unknown> = Record<string, unknown>,
+>(app: Hono<{ Bindings: E }>, services: Services): void {
   const { config, api, cdn, schedule, history } = services;
 
   app.get('/channels', (c) => c.json({ channels: playerChannels(config) }));
@@ -199,11 +191,9 @@ export function registerRoutes(app: Hono, services: Services): void {
   }
 
   /* ---------------------------------------- built frontend (web/dist) */
-  // Registered last so the API routes above always win; missing files fall
-  // through to app.notFound(). Skipped entirely in dev when dist is absent.
-  if (existsSync(WEB_DIST)) {
-    app.get('*', serveStatic({ root: WEB_DIST }));
-  }
+  // The Node entry (index.ts) registers a `serveStatic` catch-all here; the
+  // Workers entry (worker.ts) falls back to the ASSETS binding. When neither
+  // is configured the notFound handler below replies with a plain 404.
 
   app.notFound((c) => c.text(`unknown route: ${c.req.path}`, 404));
 

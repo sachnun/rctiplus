@@ -15,6 +15,7 @@ npm run dev   # api :3000, web :5173
 - `npm run build` — build web + api
 - `npm test` — api unit tests
 - `npm run typecheck` — typecheck both
+- `npm run deploy:temporary -w api` — deploy to Cloudflare Workers without logging in (temporary account; claim it within 60 min via the printed claim URL; requires wrangler ≥ 4.102)
 
 ## Usage
 

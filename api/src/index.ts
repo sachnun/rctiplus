@@ -26,6 +26,9 @@
  *   archive: curl http://localhost:3000/history/day/2026-04-05?channel=rcti
  */
 import { serve } from '@hono/node-server';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 
 import { CONFIG } from './config.js';
@@ -39,6 +42,9 @@ import { registerRoutes } from './routes.js';
 
 const port = Number(process.env.PORT || 3000);
 
+/** Production frontend: the built Vite app lives in `web/dist`. */
+const WEB_DIST = fileURLToPath(new URL('../../web/dist', import.meta.url));
+
 /* ------------------------------------------- wire up the service graph */
 const cache = createCache();
 const tokenManager = createTokenManager({ config: CONFIG });
@@ -47,8 +53,14 @@ const cdn = createCdnProxy({ config: CONFIG, api, cache });
 const schedule = createScheduleService({ config: CONFIG, cache });
 const history = createHistoryService({ config: CONFIG, cache, api, schedule });
 
-const app = new Hono();
+const app = new Hono<{ Bindings: Record<string, unknown> }>();
 registerRoutes(app, { config: CONFIG, api, cdn, schedule, history });
+
+// Built frontend catch-all, registered last so the API routes above always
+// win; skipped entirely when dist is absent (Vite dev server takes over).
+if (existsSync(WEB_DIST)) {
+  app.get('*', serveStatic({ root: WEB_DIST }));
+}
 
 serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, () => {
   console.log(`RCTI+ proxy running on http://localhost:${port}`);

@@ -4,9 +4,19 @@ import type { Cache } from './cache.js';
 import type { Config, ChannelSlug } from './config.js';
 
 /** UTF-8 -> base64url (URL-safe, no padding — safe to embed in a path). */
-const b64 = (u: string): string => Buffer.from(u, 'utf8').toString('base64url');
+const b64 = (u: string): string => {
+  const bytes = new TextEncoder().encode(u);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
 /** base64url -> UTF-8. */
-const unb64 = (s: string): string => Buffer.from(s, 'base64url').toString('utf8');
+const unb64 = (s: string): string => {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+};
 
 /** A body + headers pair the router can hand straight to Hono. */
 export interface ProxiedBody {
@@ -273,7 +283,7 @@ export function createCdnProxy({
 
   /** Serve buffered bytes, honoring an optional Range as a 206 response. */
   function serveRange(
-    buf: Buffer,
+    buf: Uint8Array,
     base: Record<string, string>,
     range?: string | null,
   ): ProxiedBody {
@@ -330,7 +340,7 @@ export function createCdnProxy({
     // pipelines choke on chunked responses without Content-Length and expect
     // byte-range support; the CDN itself sends Accept-Ranges: bytes, so mirror
     // that.  (Segments are ≤ a few MB, buffering is cheap.)
-    const buf = Buffer.from(await upstream.arrayBuffer());
+    const buf = new Uint8Array(await upstream.arrayBuffer());
     if (!buf.length) throw new HttpError('empty upstream body');
     const baseHeaders: Record<string, string> = {
       'Content-Type': ctype,

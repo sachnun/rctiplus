@@ -10,7 +10,8 @@
     "dev": "node --import tsx --watch src/index.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "deploy:temporary": "wrangler deploy --temporary"
   },
   "engines": {
     "node": ">=20.6"
