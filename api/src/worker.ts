@@ -6,9 +6,8 @@
  * request falls back to the Workers Static Assets binding (web/dist) so a
  * single deployment hosts the player, the JSON API and the HLS proxy.
  *
- * Deploy without authenticating (temporary account, claimable in the
- * dashboard within 60 minutes):
- *   cd api && wrangler deploy --temporary
+ * Deploy from the repo root (config lives in wrangler.toml at the root):
+ *   npx wrangler deploy
  */
 import { Hono } from 'hono';
 

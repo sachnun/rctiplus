@@ -11,7 +11,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "deploy:temporary": "wrangler deploy --temporary"
+    "deploy": "wrangler deploy --config ../wrangler.toml"
   },
   "engines": {
     "node": ">=20.6"
