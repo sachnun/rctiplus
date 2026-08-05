@@ -510,6 +510,39 @@ function addDays(dateStr: string, days: number): string {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
+/** Normalize a title for loose comparison: lowercase, non-alphanumerics → spaces. */
+function normTitle(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/** Title similarity in [0,1] via the LCS ratio — tolerant of small per-day
+    wording drift and episode-number suffixes in schedule titles. */
+function titleSim(a: string, b: string): number {
+  const x = normTitle(a);
+  const y = normTitle(b);
+  if (x === y) return 1;
+  if (!x || !y) return 0;
+  const m = x.length;
+  const n = y.length;
+  let prev = new Array(n + 1).fill(0);
+  let cur = new Array(n + 1).fill(0);
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      cur[j] =
+        x[i - 1] === y[j - 1]
+          ? prev[j - 1] + 1
+          : Math.max(prev[j], cur[j - 1]);
+    }
+    const t = prev;
+    prev = cur;
+    cur = t;
+  }
+  return (2 * prev[n]) / (m + n);
+}
+
 function onReplayEnded(): void {
   if (activeEpgId === null) return;
   const cur = replayFeed.get(activeEpgId);
@@ -517,20 +550,39 @@ function onReplayEnded(): void {
   const nextDate = addDays(cur.date, 1);
   if (!nextDate) return;
 
-  // Same title on the next day; prefer the exact same time slot.
-  let match: ScheduleItem | null = null;
+  // Find the same program on the next day. Titles aren't always identical
+  // across days (episode suffixes, minor wording), so allow an approximate
+  // match; the exact time slot is the strongest signal.
+  let best: ScheduleItem | null = null;
+  let bestSim = 0;
+  let bestSlot = false;
   for (const it of replayFeed.values()) {
-    if (it.date !== nextDate || it.title !== cur.title) continue;
-    if (it.start === cur.start) {
-      match = it;
-      break;
+    if (it.date !== nextDate) continue;
+    const sim = titleSim(cur.title, it.title);
+    if (sim < 0.6) continue;
+    const slot = it.start === cur.start;
+    if (
+      best === null ||
+      (slot && !bestSlot) ||
+      (slot === bestSlot && sim > bestSim)
+    ) {
+      best = it;
+      bestSim = sim;
+      bestSlot = slot;
     }
-    if (!match) match = it;
   }
-  if (!match) return;
+  if (!best) {
+    // No similar episode tomorrow — fall back to the live feed so the
+    // playback never just stops mid-marathon.
+    statusEl.textContent = 'Lanjut ke siaran langsung…';
+    activeEpgId = null;
+    markActiveReplay();
+    player.play(streamPath(activeChannel), activeChannel.toUpperCase());
+    return;
+  }
 
   statusEl.textContent = 'Lanjut ke program berikutnya…';
-  playEpg(match.epg_id, match.title);
+  playEpg(best.epg_id, best.title);
 }
 
 /* ------------------------------------------------------------- boot */
