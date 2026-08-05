@@ -30,7 +30,7 @@ RCTI+ (MNC Group), served through a local proxy so VLC can play it.
         past-event.rctiplus.id              catch-up VOD (kkvod basket)
                   │
                   ▼
-              proxy.js (localhost)
+              src/index.ts (localhost)
         - resolves fresh signed URL per request
         - injects Referer header
         - rewrites all playlist URLs through /h/<b64>
@@ -326,5 +326,5 @@ token math.
 4. Playlists rewritten through `/h/<b64>` because variant/segment URLs are
    relative and contain Akamai `hdntl` path tokens.
 
-Reversal date: 2026-08-04. API keys/tokens embedded in `proxy.js` may need
+Reversal date: 2026-08-04. API keys/tokens embedded in `src/config.ts` may need
 updating if RCTI+ rotates them.
