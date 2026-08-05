@@ -6,6 +6,7 @@ import type { CdnProxy } from './hls.js';
 import { unb64 } from './hls.js';
 import type { ScheduleService } from './schedule.js';
 import type { Config, ChannelSlug, ChannelId } from './config.js';
+import { playerPage } from './player.js';
 
 /** Everything the route handlers need, wired up in `index.ts`. */
 export interface Services {
@@ -16,13 +17,12 @@ export interface Services {
   port: number;
 }
 
-function helpText(port: number): string {
-  return (
-    'RCTI+ proxy\n' +
-    `  live    vlc http://localhost:${port}/rcti.m3u8   (rcti|mnctv|gtv|inews)\n` +
-    `  list    curl http://localhost:${port}/schedule?channel=rcti\n` +
-    `  replay  vlc "http://localhost:${port}/replay/<epg_id>.m3u8"\n`
-  );
+/** Displayed channels (first slug per channel id — dedupes the gtv/globaltv alias). */
+function playerChannels(config: Config): string[] {
+  const seen = new Set<number>();
+  return Object.entries(config.channels)
+    .filter(([, id]) => (seen.has(id) ? false : (seen.add(id), true)))
+    .map(([slug]) => slug);
 }
 
 /** Validate a channel slug and return its API id, or undefined if unknown. */
@@ -33,7 +33,7 @@ function channelId(config: Config, slug: string): ChannelId | undefined {
 export function registerRoutes(app: Hono, services: Services): void {
   const { config, api, cdn, schedule, port } = services;
 
-  app.get('/', (c) => c.text(helpText(port)));
+  app.get('/', (c) => c.html(playerPage(port, playerChannels(config))));
   app.get('/favicon.ico', (c) => c.body(null, 204));
 
   /* --------------------------------------------- proxied HLS asset (/h/<b64>) */

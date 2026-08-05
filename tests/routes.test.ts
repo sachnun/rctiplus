@@ -47,13 +47,17 @@ function makeApp() {
 }
 
 describe('routes', () => {
-  it('serves the help text on /', async () => {
+  it('serves the HTML player page on /', async () => {
     const { app } = makeApp();
     const res = await app.request('http://x/');
     expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/html');
     const text = await res.text();
-    expect(text).toContain('RCTI+ proxy');
-    expect(text).toContain('/rcti.m3u8');
+    expect(text).toContain('<!doctype html>');
+    expect(text).toContain('RCTI+ Proxy');
+    expect(text).toContain('<video');
+    expect(text).toContain('data-ch="rcti"');
+    expect(text).not.toContain('<script>const a =');
   });
 
   it('returns 204 for favicon.ico', async () => {

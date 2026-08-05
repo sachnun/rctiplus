@@ -242,6 +242,7 @@ externally, so the proxy scrapes the server-rendered page instead (stable).
 
 | Route | Purpose |
 |---|---|
+| `GET /` | HTML player page (Hono JSX): channel buttons + live video |
 | `GET /rcti.m3u8` (also `mnctv`, `gtv`, `inews`, `globaltv`) | live master |
 | `GET /replay/{epg_id}.m3u8` | catch-up master |
 | `GET /schedule?channel={rcti\|mnctv\|gtv\|inews}` | JSON schedule (10 min cache) |

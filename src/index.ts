@@ -13,6 +13,7 @@
  *
  * Usage:  node --import tsx src/index.ts
  *   (port defaults to Hono's built-in 3000 unless PORT env is set)
+ *   player:  open http://localhost:3000/  (HTML media player, hono/jsx)
  *   live:    vlc http://localhost:3000/rcti.m3u8
  *   list:    curl http://localhost:3000/schedule?channel=rcti
  *   replay:  vlc "http://localhost:3000/replay/<epg_id>.m3u8"
@@ -42,6 +43,7 @@ registerRoutes(app, { config: CONFIG, api, cdn, schedule, port });
 
 serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, () => {
   console.log(`RCTI+ proxy running on http://localhost:${port}`);
+  console.log('  player:  /            (browser media player)');
   console.log('  live:    /rcti.m3u8 /mnctv.m3u8 /gtv.m3u8 /inews.m3u8');
   console.log('  list:    /schedule?channel=rcti');
   console.log('  replay:  /replay/<epg_id>.m3u8');

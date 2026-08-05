@@ -11,6 +11,8 @@
     "forceConsistentCasingInFileNames": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
     "sourceMap": true,
     "outDir": "dist",
     "rootDir": "src"
