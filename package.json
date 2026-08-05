@@ -4,16 +4,15 @@
   "description": "RCTI+ live TV + catch-up replay proxy — monorepo (api: Hono, web: Vite)",
   "private": true,
   "workspaces": [
-    "api",
-    "web"
+    "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w api\" \"npm run dev -w web\"",
-    "dev:api": "npm run dev -w api",
-    "dev:web": "npm run dev -w web",
-    "build": "npm run build -w web && npm run build -w api",
-    "typecheck": "npm run typecheck -w api && npm run typecheck -w web",
-    "test": "npm test -w api"
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w @rctiplus/rcti-api\" \"npm run dev -w @rctiplus/rcti-web\"",
+    "dev:api": "npm run dev -w @rctiplus/rcti-api",
+    "dev:web": "npm run dev -w @rctiplus/rcti-web",
+    "build": "npm run build -w @rctiplus/rcti-web && npm run build -w @rctiplus/rcti-api",
+    "typecheck": "npm run typecheck -w @rctiplus/rcti-api && npm run typecheck -w @rctiplus/rcti-web",
+    "test": "npm test -w @rctiplus/rcti-api"
   },
   "devDependencies": {
     "concurrently": "^10.0.4"

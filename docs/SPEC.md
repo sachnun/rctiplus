@@ -41,11 +41,11 @@ RCTI+ (MNC Group), served through a local proxy so VLC can play it.
         past-event.rctiplus.id              catch-up VOD (kkvod basket)
                   │
                   ▼
-            api/src/index.ts (localhost)
+            packages/rcti-api/src/index.ts (localhost)
         - resolves fresh signed URL per request
         - injects Referer header
         - rewrites all playlist URLs through /h/<b64>
-        - serves web/dist (built Vite app) in production
+        - serves packages/rcti-web/dist (built Vite app) in production
                   │
         ┌─────────┴──────────┐
         ▼                    ▼
@@ -56,8 +56,8 @@ RCTI+ (MNC Group), served through a local proxy so VLC can play it.
 ### Repository layout & commands
 
 - `npm run dev` — API (:3000) + Vite dev server (:5173, proxies API/HLS to :3000)
-- `npm run build` — builds `web/dist`, then `api/dist`; the API serves
-  `web/dist` at `/` so one port hosts the player + API + HLS proxy
+- `npm run build` — builds `packages/rcti-web/dist`, then `packages/rcti-api/dist`; the API serves
+  `packages/rcti-web/dist` at `/` so one port hosts the player + API + HLS proxy
 - `npm test` — API unit tests (vitest)
 - `npm run typecheck` — both packages
 
@@ -269,7 +269,7 @@ The 7-day cap is **only the page's listing window** — measured directly:
 So replay is genuinely limited by **CDN retention (~4 months)**, not by the
 7-day listing.  The blocker is discoverability: the id of an old program is
 not listed anywhere public.  The proxy solves that by scanning the EPG id
-space (`api/src/history.ts`):
+space (`packages/rcti-api/src/history.ts`):
 
 - **Anchor**: the newest known id comes from the schedule scrape (fallback:
   baked reference in `config.historyRef`), refreshed on a 12 h TTL.
@@ -312,7 +312,7 @@ space (`api/src/history.ts`):
 
 | Route | Purpose |
 |---|---|
-| `GET /` | built Vite player (served from `web/dist` in production; dev uses :5173) |
+| `GET /` | built Vite player (served from `packages/rcti-web/dist` in production; dev uses :5173) |
 | `GET /channels` | channel slugs `{channels: [...]}` (drives the player UI) |
 | `GET /rcti.m3u8` (also `mnctv`, `gtv`, `inews`, `globaltv`) | live master |
 | `GET /{channel}.m3u8?quality={best\|auto\|720\|480\|360\|240\|144}` | live master, quality-pinned (see §6.2 note) |
@@ -415,5 +415,5 @@ token math.
 4. Playlists rewritten through `/h/<b64>` because variant/segment URLs are
    relative and contain Akamai `hdntl` path tokens.
 
-Reversal date: 2026-08-04. API keys/tokens embedded in `api/src/config.ts` may need
+Reversal date: 2026-08-04. API keys/tokens embedded in `packages/rcti-api/src/config.ts` may need
 updating if RCTI+ rotates them.

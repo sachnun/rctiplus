@@ -1,7 +1,7 @@
 {
-  "name": "@rctiplus/web",
+  "name": "@rctiplus/rcti-web",
   "version": "2.1.0",
-  "description": "RCTI+ browser player — immersive minimalist Android-TV UI (Vite + Tailwind)",
+  "description": "RCTI+ browser player — immersive minimalist Android-TV UI",
   "private": true,
   "type": "module",
   "scripts": {

@@ -1,7 +1,7 @@
 {
-  "name": "@rctiplus/api",
+  "name": "@rctiplus/rcti-api",
   "version": "2.1.0",
-  "description": "RCTI+ live TV + catch-up replay proxy (Hono + TypeScript)",
+  "description": "RCTI+ live TV + catch-up replay proxy",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
@@ -11,7 +11,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "deploy": "wrangler deploy --config ../wrangler.toml"
+    "deploy": "wrangler deploy --config ../../wrangler.toml"
   },
   "engines": {
     "node": ">=20.6"

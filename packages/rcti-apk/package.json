@@ -1,0 +1,6 @@
+{
+  "name": "@rctiplus/rcti-apk",
+  "version": "2.1.0",
+  "description": "RCTI+ native Android TV player",
+  "private": true
+}

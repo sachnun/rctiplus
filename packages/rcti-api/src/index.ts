@@ -13,13 +13,14 @@
  *   5. finds replay beyond 7 days by scanning the EPG id space
  *      (/history/day/YYYY-MM-DD) — VOD is actually kept ~4 months on the CDN.
  *
- * The browser player is a separate Vite app in `web/`; in production the API
- * serves its built output from `web/dist`, in development the Vite dev server
- * (5173) proxies API + HLS traffic back here.
+ * The browser player is a separate Vite app in `packages/rcti-web/`; in
+ * production the API serves its built output from `packages/rcti-web/dist`,
+ * in development the Vite dev server (5173) proxies API + HLS traffic back
+ * here.
  *
  * Usage:  node --import tsx src/index.ts
  *   (port defaults to 3000 unless PORT env is set)
- *   player:  open http://localhost:3000/  (built web app from web/dist)
+ *   player:  open http://localhost:3000/  (built web app from rcti-web/dist)
  *   live:    vlc http://localhost:3000/rcti.m3u8
  *   list:    curl http://localhost:3000/schedule?channel=rcti
  *   replay:  vlc "http://localhost:3000/replay/<epg_id>.m3u8"
@@ -42,8 +43,8 @@ import { registerRoutes } from './routes.js';
 
 const port = Number(process.env.PORT || 3000);
 
-/** Production frontend: the built Vite app lives in `web/dist`. */
-const WEB_DIST = fileURLToPath(new URL('../../web/dist', import.meta.url));
+/** Production frontend: the built Vite app lives in `packages/rcti-web/dist`. */
+const WEB_DIST = fileURLToPath(new URL('../../../packages/rcti-web/dist', import.meta.url));
 
 /* ------------------------------------------- wire up the service graph */
 const cache = createCache();
@@ -69,5 +70,5 @@ serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, () => {
   console.log('  replay:  /replay/<epg_id>.m3u8');
   console.log('  archive: /history/day/YYYY-MM-DD?channel=rcti');
   console.log('  range:   /history/range');
-  console.log('  web:     / (built Vite app from web/dist, if present)');
+  console.log('  web:     / (built Vite app from packages/rcti-web/dist, if present)');
 });
