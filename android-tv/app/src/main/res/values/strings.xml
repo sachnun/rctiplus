@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">RCTI+ TV</string>
+    <string name="live_title">Live</string>
+    <string name="replay_title">Replay</string>
+    <string name="live_badge">Saluran langsung</string>
+    <string name="error_title">Proxy tidak terjangkau</string>
+    <string name="error_subtitle">Cek koneksi internet, lalu kembali ke beranda.</string>
+</resources>

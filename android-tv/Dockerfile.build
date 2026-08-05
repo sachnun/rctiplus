@@ -1,0 +1,27 @@
+# Build environment for the RCTI+ TV APK: JDK 17 + Android SDK 35 + Gradle 8.11.1.
+# Used by build-apk.sh via podman/docker — no local Android toolchain needed.
+FROM eclipse-temurin:17-jdk-jammy
+
+ENV ANDROID_HOME=/opt/android-sdk
+ENV GRADLE_HOME=/opt/gradle
+ENV PATH="${PATH}:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${GRADLE_HOME}/bin"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends unzip curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Android command-line tools (accepts SDK licenses non-interactively).
+RUN mkdir -p ${ANDROID_HOME}/cmdline-tools \
+    && curl -fsSL -o /tmp/clt.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
+    && unzip -q /tmp/clt.zip -d ${ANDROID_HOME}/cmdline-tools \
+    && mv ${ANDROID_HOME}/cmdline-tools/cmdline-tools ${ANDROID_HOME}/cmdline-tools/latest
+
+RUN yes | sdkmanager --licenses > /dev/null 2>&1 \
+    && sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+
+# Gradle (AGP 8.7 needs >= 8.9).
+RUN curl -fsSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip \
+    && unzip -q /tmp/gradle.zip -d /opt \
+    && mv /opt/gradle-8.11.1 ${GRADLE_HOME}
+
+WORKDIR /src

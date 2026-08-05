@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TV banner (320x180): dark tile + brand-red play triangle. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path
+        android:fillColor="#0B0B0F"
+        android:pathData="M0,0h320v180h-320z" />
+    <path
+        android:fillColor="#E50914"
+        android:pathData="M122,58l70,32l-70,32z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M202,58h16v64h-16z" />
+</vector>
