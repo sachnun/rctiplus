@@ -1,0 +1,51 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+    paths: ['packages/rcti-apk/**', '.github/workflows/build-apk.yml']
+  pull_request:
+    paths: ['packages/rcti-apk/**', '.github/workflows/build-apk.yml']
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: apk-build
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Toolchain (JDK 17 + Android SDK 35 + Gradle 8.11.1) is defined once in
+      # the rcti-apk Dockerfile so CI and local `build-apk.sh` stay in sync.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build SDK image (cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: packages/rcti-apk
+          file: packages/rcti-apk/Dockerfile.build
+          push: false
+          load: true
+          tags: rctiplus-android-build
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Assemble debug APK
+        run: |
+          docker run --rm \
+            -v "${PWD}/packages/rcti-apk:/src" \
+            -w /src \
+            rctiplus-android-build \
+            bash -lc 'gradle --no-daemon assembleDebug'
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: rcti-plus-debug-apk
+          path: packages/rcti-apk/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
