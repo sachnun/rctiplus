@@ -336,10 +336,26 @@ export function createCdnProxy({
       return { body: rewritePlaylist(data.body, url), headers };
     }
 
-    // TS segment — buffer and serve as a normal seekable file.  Native media
-    // pipelines choke on chunked responses without Content-Length and expect
-    // byte-range support; the CDN itself sends Accept-Ranges: bytes, so mirror
-    // that.  (Segments are ≤ a few MB, buffering is cheap.)
+    // TS segment.  Serve whole segments as a seekable byte file for native
+    // media pipelines (they choke on chunked bodies without Content-Length and
+    // expect byte-range support).  But when the client wants the whole segment
+    // (hls.js, no Range header) and the CDN gives us a known size, STREAM it
+    // through instead of buffering: time-to-first-byte then matches the CDN's
+    // instead of waiting for the whole (sometimes slow) segment to download,
+    // which is what makes replay "hang at the start" on slower links.
+    const len = upstream.headers.get('content-length');
+    if (!opts.range && upstream.body && len !== null) {
+      const headers: Record<string, string> = {
+        'Content-Type': ctype,
+        'Content-Length': len,
+        'Cache-Control': 'public, max-age=300',
+        'Access-Control-Allow-Origin': '*',
+        'Accept-Ranges': 'bytes',
+      };
+      return { body: upstream.body, headers };
+    }
+
+    // Range/seek (native players) or unknown size — buffer, then serve 206.
     const buf = new Uint8Array(await upstream.arrayBuffer());
     if (!buf.length) throw new HttpError('empty upstream body');
     const baseHeaders: Record<string, string> = {

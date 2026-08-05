@@ -21,6 +21,8 @@ export class Player {
   private quality: string = 'best';
   private currentPath: string | null = null;
   private currentLabel = '';
+  /** Consecutive fatal hls.js errors since the last start, for bounded recovery. */
+  private fatalCount = 0;
 
   constructor(video: HTMLVideoElement, events: PlayerEvents) {
     this.video = video;
@@ -80,14 +82,37 @@ export class Player {
       return;
     }
 
+    // Fragments on the catch-up CDN (past-event.rctiplus.id) can be slow to
+    // first byte on weaker links, especially the opening segment of a replay.
+    // Use generous, explicit load timeouts and many internal retries so a slow
+    // (not dead) stream is given time to start instead of aborting early.
     const hls = new Hls({
       liveSyncDurationCount: 3,
       maxBufferLength: 30,
       maxMaxBufferLength: 60,
       backBufferLength: 90,
       startFragPrefetch: true,
+      // Slow-first-byte tolerance (catch-up CDN can be slow on the first
+      // segment, especially at the very start of a replay).
+      manifestLoadPolicy: {
+        default: {
+          maxTimeToFirstByteMs: 30000,
+          maxLoadTimeMs: 60000,
+          timeoutRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 30000 },
+          errorRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 30000 },
+        },
+      },
+      fragLoadPolicy: {
+        default: {
+          maxTimeToFirstByteMs: 45000,
+          maxLoadTimeMs: 120000,
+          timeoutRetry: { maxNumRetry: 12, retryDelayMs: 1000, maxRetryDelayMs: 90000 },
+          errorRetry: { maxNumRetry: 12, retryDelayMs: 1000, maxRetryDelayMs: 90000 },
+        },
+      },
     });
     this.hls = hls;
+    this.fatalCount = 0;
     hls.loadSource(url);
     hls.attachMedia(this.video);
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -99,29 +124,49 @@ export class Player {
     });
     hls.on(Hls.Events.ERROR, (_e, data) => {
       if (!data || !data.fatal) return;
+      this.fatalCount += 1;
+
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-        if (
+        const manifestError =
           data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
-          data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT
-        ) {
+          data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT;
+        if (manifestError) {
+          // Dead/expired master (live or expired catch-up token): point at a
+          // fresh resolution before calling it a day.
           this.events.status('buffering', 'Menunggu program berikutnya…');
           this.fallbackToAuto();
           return;
         }
-        if (
+
+        const fragmentError =
           data.details === Hls.ErrorDetails.FRAG_LOAD_ERROR ||
-          data.details === Hls.ErrorDetails.FRAG_LOAD_TIMEOUT
-        ) {
+          data.details === Hls.ErrorDetails.FRAG_LOAD_TIMEOUT ||
+          data.details === Hls.ErrorDetails.LEVEL_LOAD_ERROR ||
+          data.details === Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT;
+
+        // Give a struggling stream a couple of in-place recoveries first.
+        if (fragmentError && this.fatalCount < 3) {
           this.events.status('buffering', 'Menunggu segmen berikutnya…');
+          hls.startLoad();
+          return;
         }
-        hls.startLoad();
-        return;
-      }
-      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+
+        // Nothing buffered and fragments still won't load: drop to 'auto'
+        // (ABR, starts at the lowest variant) instead of retrying seg-1 from
+        // the top forever. A lower-bandwidth rendition usually starts where
+        // the pinned 720p would not.
+        if (this.quality !== 'auto') {
+          this.events.status('buffering', 'Mencoba kualitas lebih rendah…');
+          this.fallbackToAuto();
+          return;
+        }
+      } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
         this.events.status('buffering', 'Mencoba pulihkan…');
         hls.recoverMediaError();
         return;
       }
+
+      // Unrecoverable — surface it once instead of looping silently forever.
       this.events.status('error', `Playback error: ${data.details || data.type}`);
       hls.destroy();
       this.hls = null;
@@ -129,6 +174,7 @@ export class Player {
   }
 
   stop(): void {
+    this.fatalCount = 0;
     if (this.hls) {
       this.hls.destroy();
       this.hls = null;
