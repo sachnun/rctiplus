@@ -1,4 +1,4 @@
-# @rctiplus/rcti-api
+# @rctiplus/api
 
 RCTI+ live TV + catch-up replay proxy. Serves signed HLS manifests, proxies
 CDN segments, and provides the JSON schedule/history API.

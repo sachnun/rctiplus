@@ -1,5 +1,5 @@
 {
-  "name": "@rctiplus/rcti-web",
+  "name": "@rctiplus/web",
   "version": "2.1.0",
   "description": "RCTI+ browser player — immersive minimalist Android-TV UI",
   "private": true,

@@ -7,7 +7,7 @@ import kotlinx.coroutines.withContext
  * Fully-local RCTI+ client — no proxy, no server.
  *
  * The app talks to RCTI+ directly with the same contract the server-side
- * proxy implements (packages/rcti-api): it extracts the visitor JWT, resolves
+ * proxy implements (packages/api): it extracts the visitor JWT, resolves
  * signed HLS masters from toutatis, scrapes the 7-day catch-up page and
  * discovers deeper history by scanning the EPG id space. ExoPlayer then plays
  * the streams directly, sending the Referer header the CDN's ACL demands.

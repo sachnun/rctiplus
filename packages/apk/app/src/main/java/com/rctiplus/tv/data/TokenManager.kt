@@ -3,7 +3,7 @@ package com.rctiplus.tv.data
 import java.io.IOException
 
 /**
- * Anonymous visitor JWT manager — mirror of packages/rcti-api/src/token.ts,
+ * Anonymous visitor JWT manager — mirror of packages/api/src/token.ts,
  * minus the baked fallback token (no hardcoded credential in the APK).
  *
  * Every JSON API call must carry `Authorization: <visitor JWT>` plus the

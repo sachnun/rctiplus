@@ -1,4 +1,4 @@
-# @rctiplus/rcti-web
+# @rctiplus/web
 
 RCTI+ browser player — immersive minimalist Android-TV UI.
 

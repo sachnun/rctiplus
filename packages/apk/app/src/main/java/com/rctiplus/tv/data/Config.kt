@@ -2,14 +2,14 @@ package com.rctiplus.tv.data
 
 /**
  * RCTI+ constants — the Kotlin side of the shared contract, mirroring
- * packages/rcti-api/src/config.ts.
+ * packages/api/src/config.ts.
  *
  * RCTI+ hands out signed HLS URLs only to its own web app: the CDN enforces a
  * Referer ACL plus Akamai hdnts/hdntl tokens, and the JSON API requires a
  * client-side visitor JWT (Authorization) and an API key. This app talks to
  * RCTI+ directly (fully local, no proxy), so it needs the exact same
  * constants the server-side proxy uses. Keep every value in sync with
- * packages/rcti-api/src/config.ts.
+ * packages/api/src/config.ts.
  */
 object Config {
 

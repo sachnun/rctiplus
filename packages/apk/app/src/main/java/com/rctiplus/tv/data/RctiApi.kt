@@ -23,7 +23,7 @@ data class ResolvedEpg(
 
 /**
  * RCTI+ JSON API client (toutatis.rctiplus.com/video/live/api/v1) — mirror of
- * packages/rcti-api/src/rctiplus.ts. Resolves signed master playlist URLs.
+ * packages/api/src/rctiplus.ts. Resolves signed master playlist URLs.
  * Results are cached because the tokens in them are only valid for a few
  * hours and re-resolving on every playback is wasteful.
  */

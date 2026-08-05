@@ -6,9 +6,9 @@ RCTI+ live TV + catch-up replay — monorepo.
 
 | Package                                                         | Description |
 | --------------------------------------------------------------- | ----------- |
-| [`@rctiplus/rcti-api`](packages/rcti-api/README.md) | API proxy + Worker |
-| [`@rctiplus/rcti-web`](packages/rcti-web/README.md) | Web player  |
-| [`@rctiplus/rcti-apk`](packages/rcti-apk/README.md) | Native TV app |
+| [`@rctiplus/api`](packages/api/README.md) | API proxy + Worker |
+| [`@rctiplus/web`](packages/web/README.md) | Web player  |
+| [`@rctiplus/apk`](packages/apk/README.md) | Native TV app |
 
 ## Commands
 

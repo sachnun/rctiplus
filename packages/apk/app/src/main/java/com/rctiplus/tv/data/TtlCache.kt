@@ -3,7 +3,7 @@ package com.rctiplus.tv.data
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Minimal TTL cache — mirror of packages/rcti-api/src/cache.ts.
+ * Minimal TTL cache — mirror of packages/api/src/cache.ts.
  * Entries expire once `now - at` exceeds the caller-supplied TTL.
  * Keys are plain strings (`live:1`, `epg:328332`, `schedule:rcti`, ...).
  */

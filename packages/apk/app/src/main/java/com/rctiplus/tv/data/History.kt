@@ -31,7 +31,7 @@ data class HistoryPrev(
 )
 
 /**
- * Deep catch-up history discovery — mirror of packages/rcti-api/src/history.ts.
+ * Deep catch-up history discovery — mirror of packages/api/src/history.ts.
  *
  * The desktop TV page only renders a 7-day catch-up list, but the VOD files
  * on `past-event.rctiplus.id` are kept for ~4 months. EPG ids are shared

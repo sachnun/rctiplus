@@ -6,7 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * HLS helpers — mirror of packages/rcti-api/src/hls.ts.
+ * HLS helpers — mirror of packages/api/src/hls.ts.
  *
  * The CDN picks the lowest bitrate when left to client-side ABR, so we pin
  * the best variant here. ExoPlayer then plays the chosen media playlist

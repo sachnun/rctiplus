@@ -1,5 +1,5 @@
 {
-  "name": "@rctiplus/rcti-api",
+  "name": "@rctiplus/api",
   "version": "2.1.0",
   "description": "RCTI+ live TV + catch-up replay proxy",
   "private": true,

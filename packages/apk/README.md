@@ -1,4 +1,4 @@
-# @rctiplus/rcti-apk
+# @rctiplus/apk
 
 **Fully-local native Android TV player.** Unlike the web/Worker client, this
 app needs **no proxy and no server**: it talks to RCTI+ directly and plays via
@@ -20,7 +20,7 @@ The app ports the proxy's logic to Kotlin, so nothing runs server-side:
 | Playback (Referer header)        | `MainActivity` ExoPlayer via `DefaultHttpDataSource` |
 
 The shared contract (apiKey, Referer, channel→id map, history tuning)
-mirrors `packages/rcti-api/src/config.ts` in `Config.kt` — keep them in sync.
+mirrors `packages/api/src/config.ts` in `Config.kt` — keep them in sync.
 
 ## Build
 

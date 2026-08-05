@@ -15,7 +15,7 @@ data class ScheduleItem(
 )
 
 /**
- * 7-day catch-up schedule scraper — mirror of packages/rcti-api/src/schedule.ts.
+ * 7-day catch-up schedule scraper — mirror of packages/api/src/schedule.ts.
  *
  * The desktop TV page renders the full catch-up window server-side; each
  * program is an anchor with an `onclick="...; clickCatchup('...')"` handler.
