@@ -34,6 +34,23 @@ export interface ScheduleService {
 const SCHEDULE_RE =
   /clickCatchup\(\s*'https:\/\/www\.rctiplus\.com\/tv\/(rcti|mnctv|gtv|inews)\/(\d+)\/([a-z0-9-]+)\?date=([0-9-]+)'[^>]*>\s*<h2>\s*([^<]+?)\s*<\/h2>\s*<br>\s*<h4>\s*([0-9:]+)\s*-\s*([0-9:]+)\s*<\/h4>/gs;
 
+/** Decode the handful of HTML entities RCTI+ pages use in titles. */
+const ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+};
+function decodeEntities(s: string): string {
+  return s.replace(/&(?:([a-z]+)|#(\d+)|#x([0-9a-f]+));/gi, (m, name, dec, hex) => {
+    if (dec) return String.fromCodePoint(Number(dec));
+    if (hex) return String.fromCodePoint(parseInt(hex, 16));
+    return name ? (ENTITIES[name.toLowerCase()] ?? m) : m;
+  });
+}
+
 export function createScheduleService({
   config,
   cache,
@@ -62,7 +79,7 @@ export function createScheduleService({
         epg_id: Number(epgId),
         slug,
         date,
-        title: title.trim(),
+        title: decodeEntities(title.trim()),
         start,
         end,
         url: `/replay/${epgId}.m3u8`,

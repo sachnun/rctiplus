@@ -47,6 +47,17 @@ describe('createScheduleService', () => {
     });
   });
 
+  it('decodes HTML entities in titles', async () => {
+    const { service } = makeService();
+    const html = [
+      entry('rcti', 1, 'a-b', 'Berita &amp; Info', '00:15', '01:30'),
+      entry('rcti', 2, 'c-d', 'Kuis &#39;Ajaib&#39;', '01:30', '03:00'),
+    ].join('\n');
+    vi.mocked(fetch).mockResolvedValue(new Response(html));
+    const sched = await service.fetchSchedule('rcti');
+    expect(sched.items.map((i) => i.title)).toEqual(["Berita & Info", "Kuis 'Ajaib'"]);
+  });
+
   it('filters out entries from other channels', async () => {
     const { service } = makeService();
     vi.mocked(fetch).mockResolvedValue(new Response(HTML));
