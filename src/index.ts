@@ -11,10 +11,11 @@
  *      header so VLC (which sends no Referer) can play them,
  *   4. exposes the 7-day catch-up schedule as JSON via /schedule.
  *
- * Usage:  node --import tsx src/index.ts [port]     (default port 8080)
- *   live:    vlc http://localhost:8080/rcti.m3u8
- *   list:    curl http://localhost:8080/schedule?channel=rcti
- *   replay:  vlc "http://localhost:8080/replay/<epg_id>.m3u8"
+ * Usage:  node --import tsx src/index.ts
+ *   (port defaults to Hono's built-in 3000 unless PORT env is set)
+ *   live:    vlc http://localhost:3000/rcti.m3u8
+ *   list:    curl http://localhost:3000/schedule?channel=rcti
+ *   replay:  vlc "http://localhost:3000/replay/<epg_id>.m3u8"
  */
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
@@ -27,7 +28,7 @@ import { createCdnProxy } from './hls.js';
 import { createScheduleService } from './schedule.js';
 import { registerRoutes } from './routes.js';
 
-const port = Number(process.argv[2] || process.env.PORT || CONFIG.defaultPort);
+const port = Number(process.env.PORT || 3000);
 
 /* ------------------------------------------- wire up the service graph */
 const cache = createCache();

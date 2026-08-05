@@ -20,8 +20,6 @@ export type ChannelSlug = keyof typeof CHANNELS;
 export type ChannelId = (typeof CHANNELS)[ChannelSlug];
 
 export const CONFIG = {
-  /** Port used when none is given via argv / PORT env. */
-  defaultPort: 8080,
 
   /* ------------------------------------------------------- RCTI+ constants */
   apiBase: 'https://toutatis.rctiplus.com/video/live/api/v1',
