@@ -1,5 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="brand">#E50914</color>
+    <!-- Base -->
     <color name="background">#000000</color>
+    <color name="white">#FFFFFF</color>
+    <color name="backdrop">#8C000000</color>
+    <color name="brand">#E50914</color>
+
+    <!-- Hairstyle menu text (web palette) -->
+    <color name="text_primary">#A6FFFFFF</color>   <!-- white/65 -->
+    <color name="text_muted">#59FFFFFF</color>     <!-- white/35 -->
+    <color name="text_active">#8CFFFFFF</color>     <!-- white/55 -->
+    <color name="section_label">#59FFFFFF</color>  <!-- white/35 -->
+    <color name="row_focus_bg">#0DFFFFFF</color>   <!-- white/6 -->
+
+    <!-- Chrome HUD -->
+    <color name="hud_now">#99FFFFFF</color>        <!-- white/60 -->
+    <color name="hud_status">#80FFFFFF</color>     <!-- white/50 -->
+    <color name="status_buffering">#80FFFFFF</color>
+    <color name="status_error">#F87171</color>     <!-- red-400 -->
+    <color name="status_idle">#4DFFFFFF</color>    <!-- white/30 -->
+    <!-- Channels button -->
+    <color name="btn_bg">#99000000</color>         <!-- black/60 -->
+    <color name="btn_border">#26FFFFFF</color>     <!-- white/15 -->
+    <color name="btn_border_focused">#66FFFFFF</color>
+    <color name="btn_text">#B3FFFFFF</color>       <!-- white/70 -->
 </resources>

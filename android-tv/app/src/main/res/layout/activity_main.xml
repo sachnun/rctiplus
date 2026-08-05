@@ -1,5 +1,91 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.fragment.app.FragmentContainerView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/browse_container"
+<!-- Mirrors the web player: full-screen video with a minimal chrome HUD
+     (auto-hides on idle) and a left slide-in menu of channels + replay. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
     android:layout_width="match_parent"
-    android:layout_height="match_parent" />
+    android:layout_height="match_parent"
+    android:background="@color/background">
+
+    <androidx.media3.ui.PlayerView
+        android:id="@+id/player_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:show_buffering="when_playing"
+        app:show_timeout="3000"
+        app:resize_mode="fit"
+        app:use_controller="true" />
+
+    <!-- Dim behind the open menu; tapping it closes the panel. -->
+    <View
+        android:id="@+id/backdrop"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:alpha="0.0"
+        android:background="@color/backdrop"
+        android:visibility="gone" />
+
+    <!-- Chrome HUD (like the web): program/channel label top-left, Channels
+         button top-right. Shown on activity, hidden after an idle timeout.
+         Wraps content height so taps below it reach the player directly. -->
+    <FrameLayout
+        android:id="@+id/chrome"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="16dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="start|top"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/now_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:maxLines="1"
+                android:textColor="@color/hud_now"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/status_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:maxLines="1"
+                android:textColor="@color/hud_status"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/channels_btn"
+            style="@style/ChromeButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end|top"
+            android:text="@string/menu_button"
+            android:textAllCaps="false" />
+    </FrameLayout>
+
+    <!-- Left slide-in menu: channel list + replay schedule. -->
+    <LinearLayout
+        android:id="@+id/side_panel"
+        android:layout_width="320dp"
+        android:layout_height="match_parent"
+        android:background="@color/background"
+        android:orientation="vertical"
+        android:translationX="-320dp">
+
+        <ListView
+            android:id="@+id/menu_list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:divider="@android:color/transparent"
+            android:dividerHeight="0dp"
+            android:listSelector="@android:color/transparent"
+            android:scrollbarStyle="outsideOverlay" />
+    </LinearLayout>
+</FrameLayout>

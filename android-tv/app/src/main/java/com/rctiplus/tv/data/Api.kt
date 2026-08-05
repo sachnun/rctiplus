@@ -18,7 +18,7 @@ const val BASE_URL = "https://rcti-plus.sachnun.workers.dev"
 object Api {
 
     /** Static channel list — mirrors the proxy's `/channels` response. */
-    suspend fun channels(): List<Channel> = listOf(
+    fun channels(): List<Channel> = listOf(
         Channel("rcti", "RCTI"),
         Channel("mnctv", "MNCTV"),
         Channel("gtv", "GTV"),
@@ -48,8 +48,8 @@ object Api {
     /** Live master, quality pinned to the best variant server-side. */
     fun liveUrl(channel: String) = "$BASE_URL/$channel.m3u8?quality=best"
 
-    /** Catch-up (VOD) master for one program. */
-    fun replayUrl(epgId: Long) = "$BASE_URL/replay/$epgId.m3u8"
+    /** Catch-up (VOD) master for one program — always the highest variant. */
+    fun replayUrl(epgId: Long) = "$BASE_URL/replay/$epgId.m3u8?quality=best"
 
     private fun parseItems(obj: JSONObject): List<ReplayItem> {
         val arr = obj.getJSONArray("items")

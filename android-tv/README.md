@@ -1,30 +1,34 @@
 # RCTI+ TV — Android TV app
 
 Native Android TV player for the [RCTI+ proxy](../../README.md), deployed at
-`https://rcti-plus.sachnun.workers.dev`. Minimal and dependency-light:
+`https://rcti-plus.sachnun.workers.dev`. A single, web-like screen — minimal
+and dependency-light:
 
-- **Home** — Leanback `BrowseSupportFragment`: a *Live* row (RCTI, MNCTV, GTV,
-  iNews) and a *Replay* row seeded with the 7-day catch-up schedule of all
-  channels, paging deeper via `/history/prev` until the ~4-month CDN boundary.
-- **Player** — media3 ExoPlayer HLS in a full-screen `PlayerView` with the
-  built-in TV controller. Quality is pinned server-side (`?quality=best`);
-  the proxy's token self-heal (302) is followed automatically.
+- **Player-first** — full-screen media3 ExoPlayer HLS in a `PlayerView`; the
+  first channel's live feed auto-plays on boot (like the web player). Quality
+  is pinned server-side (`?quality=best`); the proxy's token self-heal (302)
+  is followed automatically.
+- **Chrome HUD** — a small program/channel label and a `Channels` button fade
+  in on any key/touch and out after 3.5s of idle.
+- **Left slide-in menu** (same look as the web sidebar): hairline channel
+  rows (`01`, `02`, …) and a `Replay` section with date headers
+  (Hari Ini / Kemarin / absolute), paging deeper via `/history/prev` until
+  the ~4-month CDN boundary. Selecting a channel plays it live and reloads
+  its replay; picking a program plays that catch-up and dismisses the menu.
 
-Dependencies: leanback, media3 (exoplayer/hls/ui), lifecycle. JSON is parsed
-with `org.json`; HTTP with `HttpURLConnection` — no OkHttp, no serialization
-plugin, no settings screen (the proxy is a fixed remote HTTPS origin).
+Dependencies: leanback (theme only), media3 (exoplayer/hls/ui), lifecycle.
+JSON is parsed with `org.json`; HTTP with `HttpURLConnection` — no OkHttp, no
+serialization plugin, no settings screen (the proxy is a fixed remote HTTPS
+origin).
 
 ## Layout
 
 ```
 app/src/main/java/com/rctiplus/tv/
-├── MainActivity.kt        hosts BrowseFragment
-├── PlayerActivity.kt      media3 PlayerView + ExoPlayer
+├── MainActivity.kt        player + chrome HUD + slide-in menu (single screen)
 ├── data/Api.kt            BASE_URL + JSON endpoints (/schedule, /history/prev)
 ├── data/Model.kt          Channel / ReplayItem / PrevResult
-└── ui/
-    ├── BrowseFragment.kt  rows, card click -> play, infinite-scroll paging
-    └── CardPresenter.kt   leanback card rendering
+└── ui/MenuAdapter.kt      replay feed adapter (date headers + program rows)
 ```
 
 ## Build the APK
@@ -59,3 +63,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
   leanback launcher banner included.
 - Live URL shape: `https://rcti-plus.sachnun.workers.dev/{channel}.m3u8?quality=best`
 - Replay URL shape: `https://rcti-plus.sachnun.workers.dev/replay/{epg_id}.m3u8`
+- Debug APKs are signed with `app/debug.keystore` (stable across rebuilds, so
+  `adb install -r` upgrades in place); it is git-ignored — regenerate with
+  `keytool` if missing, or delete the file to let Gradle fall back to the
+  default debug signing.
