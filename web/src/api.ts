@@ -26,18 +26,6 @@ export interface DayItem {
   playable: boolean;
 }
 
-export interface DayResult {
-  date: string;
-  channel?: string;
-  items: DayItem[];
-}
-
-export interface HistoryRange {
-  earliest: string;
-  latest: string;
-  days: number;
-}
-
 export interface PrevResult {
   date: string | null;
   earliest: string;
@@ -55,11 +43,6 @@ export const api = {
   channels: () => getJson<Channels>('/channels'),
   schedule: (channel: string) =>
     getJson<Schedule>(`/schedule?channel=${encodeURIComponent(channel)}`),
-  historyRange: () => getJson<HistoryRange>('/history/range'),
-  historyDay: (date: string, channel: string) =>
-    getJson<DayResult>(
-      `/history/day/${date}?channel=${encodeURIComponent(channel)}`,
-    ),
   historyPrev: (before: string, channel: string) =>
     getJson<PrevResult>(
       `/history/prev?before=${encodeURIComponent(before)}&channel=${encodeURIComponent(channel)}`,

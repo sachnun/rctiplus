@@ -4,7 +4,7 @@
  * Design: a full-screen black theater. While watching, the screen shows only
  * the picture; the chrome (a tiny channel label and a `Channels` button)
  * fades in on any activity and back out on idle. One left-side panel holds
- * everything else — channels, replay schedule, archive — kept deliberately
+ * everything else — channels, replay schedule — kept deliberately
  * sparse (hairline rows, muted type, one white accent for the active item).
  */
 import './style.css';
@@ -38,13 +38,6 @@ app.innerHTML = `
       <div id="channels"></div>
       <div class="section-label">Replay</div>
       <div id="replay"></div>
-      <div class="section-label">Archive</div>
-      <div id="archive">
-        <input id="arch-date" type="date" class="focusable mx-4 my-1 w-[calc(100%-2rem)]
-          rounded-sm border border-white/15 bg-black px-3 py-2 text-sm text-white/80
-          outline-none" />
-        <div id="archive-list"></div>
-      </div>
     </div>
     <div class="flex items-center justify-between border-t border-white/10 px-4 py-3">
       <span class="text-[10px] uppercase tracking-[0.18em] text-white/35">Kualitas</span>
@@ -64,8 +57,6 @@ const menuBtn = document.getElementById('menu-btn') as HTMLButtonElement;
 const side = document.getElementById('side') as HTMLElement;
 const channelList = document.getElementById('channels') as HTMLDivElement;
 const replayList = document.getElementById('replay') as HTMLDivElement;
-const archiveList = document.getElementById('archive-list') as HTMLDivElement;
-const archDate = document.getElementById('arch-date') as HTMLInputElement;
 const qualitySel = document.getElementById('quality') as HTMLSelectElement;
 
 /* ----------------------------------------------------------- state */
@@ -258,7 +249,6 @@ async function selectChannel(ch: string): Promise<void> {
   sideOpen && setSide(false);
   player.play(streamPath(ch), ch.toUpperCase());
   loadReplay(ch);
-  if (archDate.value) loadArchive(archDate.value);
 }
 function playEpg(epgId: number, title: string): void {
   sideOpen && setSide(false);
@@ -384,59 +374,11 @@ async function loadReplay(channel: string): Promise<void> {
   }
 }
 
-/* -------------------------------------------------------- deep archive */
-async function loadRange(): Promise<void> {
-  try {
-    const r = await api.historyRange();
-    archDate.min = r.earliest;
-    archDate.max = r.latest;
-    if (!archDate.value) archDate.value = r.latest;
-    loadArchive(archDate.value);
-  } catch {
-    const e = document.createElement('div');
-    e.className = 'px-4 py-2 text-xs text-red-400';
-    e.textContent = 'Tidak dapat memuat arsip.';
-    archiveList.appendChild(e);
-  }
-}
-async function loadArchive(date: string): Promise<void> {
-  archiveList.innerHTML = '';
-  const label = document.createElement('div');
-  label.className = 'px-4 py-2 text-xs text-white/40';
-  label.textContent = `Memuat arsip ${date}…`;
-  archiveList.appendChild(label);
-
-  try {
-    const data = await api.historyDay(date, activeChannel || channels[0]!);
-    archiveList.innerHTML = '';
-    const playable = (data.items ?? []).filter((it) => it.playable);
-    if (!playable.length) {
-      const e = document.createElement('div');
-      e.className = 'px-4 py-2 text-xs text-white/40';
-      e.textContent = data.items.length
-        ? 'Program di tanggal ini sudah tidak tersedia (retensi ±4 bulan).'
-        : 'Tidak ada program untuk tanggal ini.';
-      archiveList.appendChild(e);
-      return;
-    }
-    for (const it of playable) {
-      archiveList.appendChild(progRow(it.epg_id, it.title, it.start, it.end));
-    }
-  } catch (err) {
-    const e = document.createElement('div');
-    e.className = 'px-4 py-2 text-xs text-red-400';
-    e.textContent = `Gagal memuat arsip: ${(err as Error).message}`;
-    archiveList.appendChild(e);
-  }
-}
-
 /* ------------------------------------------------------------- boot */
 qualitySel.addEventListener('change', () => {
   quality = qualitySel.value as Quality;
   player.setQuality(quality);
 });
-archDate.addEventListener('change', () => loadArchive(archDate.value));
-
 (async () => {
   try {
     const data = await api.channels();
@@ -452,6 +394,5 @@ archDate.addEventListener('change', () => loadArchive(archDate.value));
     statusEl.textContent = `API tidak dapat dijangkau: ${(err as Error).message}`;
     statusEl.classList.remove('hidden');
   }
-  loadRange();
   wake();
 })();
