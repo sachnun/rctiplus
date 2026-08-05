@@ -1,12 +1,39 @@
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { HttpError } from './rctiplus.js';
 import type { ApiClient } from './rctiplus.js';
-import type { CdnProxy } from './hls.js';
-import { unb64 } from './hls.js';
+import type { CdnProxy, ProxiedBody } from './hls.js';
+import { unb64, type QualityFilter } from './hls.js';
 import type { ScheduleService } from './schedule.js';
+import type { HistoryService } from './history.js';
 import type { Config, ChannelSlug, ChannelId } from './config.js';
+import { hlsJsBundle } from './hlsjs.js';
 import { playerPage } from './player.js';
+
+/** Convert a non-304 ProxiedBody body to something Hono accepts. */
+function toBodyInit(
+  body: Exclude<ProxiedBody['body'], null>,
+): string | ArrayBuffer | ReadableStream<Uint8Array> {
+  if (body instanceof Uint8Array) {
+    // Buffer/Uint8Array -> ArrayBuffer (Hono's Data type wants ArrayBuffer).
+    return body.buffer.slice(
+      body.byteOffset,
+      body.byteOffset + body.byteLength,
+    ) as ArrayBuffer;
+  }
+  return body;
+}
+
+/** Send a ProxiedBody (200/206/304) to the client. */
+function sendProxied(c: Context, pb: ProxiedBody): Response {
+  if (pb.status === 304) return c.body(null, 304, pb.headers);
+  return c.body(
+    toBodyInit(pb.body as Exclude<ProxiedBody['body'], null>),
+    (pb.status ?? 200) as ContentfulStatusCode,
+    pb.headers,
+  );
+}
 
 /** Everything the route handlers need, wired up in `index.ts`. */
 export interface Services {
@@ -14,6 +41,7 @@ export interface Services {
   api: ApiClient;
   cdn: CdnProxy;
   schedule: ScheduleService;
+  history: HistoryService;
   port: number;
 }
 
@@ -30,18 +58,52 @@ function channelId(config: Config, slug: string): ChannelId | undefined {
   return config.channels[slug.toLowerCase() as ChannelSlug];
 }
 
+/**
+ * Map a `?quality=` value to a proxy-side variant filter. `auto`/absent
+ * keeps the full master (client ABR); the player prefixes one of `best` or a
+ * target height (e.g. `480`) to force a single variant for every client.
+ */
+function qualityFilter(q: string | undefined): QualityFilter | undefined {
+  if (!q || q === 'auto') return undefined;
+  if (q === 'best') return { mode: 'best' };
+  const height = Number(q);
+  if (Number.isFinite(height) && height > 0) return { mode: 'max-height', height };
+  return undefined;
+}
+
 export function registerRoutes(app: Hono, services: Services): void {
-  const { config, api, cdn, schedule, port } = services;
+  const { config, api, cdn, schedule, history, port } = services;
 
   app.get('/', (c) => c.html(playerPage(port, playerChannels(config))));
   app.get('/favicon.ico', (c) => c.body(null, 204));
+
+  /* ------------------------------------------------ local hls.js bundle */
+  // The player page loads hls.js from this proxy instead of an external CDN
+  // (jsdelivr is intermittently unreachable from some networks).
+  app.get('/hls.js', async (c) => {
+    try {
+      return c.body(await hlsJsBundle(), 200, {
+        'Content-Type': 'application/javascript; charset=utf-8',
+        'Cache-Control': 'public, max-age=86400',
+      });
+    } catch (e) {
+      return c.text(
+        'hls.js bundle unavailable: ' + (e instanceof Error ? e.message : e),
+        500,
+      );
+    }
+  });
 
   /* --------------------------------------------- proxied HLS asset (/h/<b64>) */
   app.get('/h/:b64', async (c) => {
     const url = unb64(c.req.param('b64'));
     try {
-      const { body, headers } = await cdn.handleAsset(url);
-      return c.body(body, 200, headers);
+      const { body, headers, status } = await cdn.handleAsset(url, {
+        range: c.req.header('range'),
+        ifNoneMatch: c.req.header('if-none-match'),
+        ifModifiedSince: c.req.header('if-modified-since'),
+      });
+      return sendProxied(c, { body, headers, status });
     } catch (e) {
       // A dead live playlist with expired hdntl tokens: point the player at a
       // fresh master so it re-resolves and keeps playing.
@@ -73,6 +135,28 @@ export function registerRoutes(app: Hono, services: Services): void {
     return c.json(data, 200, { 'Cache-Control': 'no-store' });
   });
 
+  /* --------------------------------------- deep history: /history/* */
+  // Replay beyond the 7-day schedule window.  The page only lists 7 days, but
+  // the VOD files on the CDN are kept ~4 months; /history/day/<date> finds
+  // those older programs by scanning the EPG id space (see src/history.ts).
+  app.get('/history/range', async (c) => c.json(await history.fetchRange()));
+
+  app.get('/history/day/:date', async (c) => {
+    const date = c.req.param('date');
+    const q = c.req.query('channel');
+    const slug = q ? (q.toLowerCase() as ChannelSlug) : undefined;
+    if (slug && channelId(config, slug) === undefined) {
+      return c.text(`unknown channel: ${slug}`, 404);
+    }
+    try {
+      const data = await history.fetchDay(date, slug);
+      return c.json(data, 200, { 'Cache-Control': 'no-store' });
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 400) return c.text(e.message, 400);
+      throw e;
+    }
+  });
+
   /* ------------------------------------------------- catch-up: /replay/<epg>.m3u8 */
   // Hono (this version) mis-parses `:param.ext` segment patterns, so replay
   // uses a wildcard and strips the optional .m3u8 suffix manually.
@@ -81,8 +165,12 @@ export function registerRoutes(app: Hono, services: Services): void {
     if (!/^\d+$/.test(epgId)) return c.text(`unknown route: ${c.req.path}`, 404);
 
     const master = await api.resolveEpgMaster(epgId);
-    const { body, headers } = await cdn.serveMaster(master);
-    return c.body(body, 200, headers);
+    const { body, headers, status } = await cdn.serveMaster(master, {
+      filter: qualityFilter(c.req.query('quality')),
+      ifNoneMatch: c.req.header('if-none-match'),
+      ifModifiedSince: c.req.header('if-modified-since'),
+    });
+    return sendProxied(c, { body, headers, status });
   });
 
   /* ------------------------------------------------- live: /<channel>.m3u8 */
@@ -92,8 +180,12 @@ export function registerRoutes(app: Hono, services: Services): void {
   for (const slug of Object.keys(config.channels)) {
     app.get(`/${slug}.m3u8`, async (c) => {
       const master = await api.resolveMaster(config.channels[slug as ChannelSlug]);
-      const { body, headers } = await cdn.serveMaster(master);
-      return c.body(body, 200, headers);
+      const { body, headers, status } = await cdn.serveMaster(master, {
+        filter: qualityFilter(c.req.query('quality')),
+        ifNoneMatch: c.req.header('if-none-match'),
+        ifModifiedSince: c.req.header('if-modified-since'),
+      });
+      return sendProxied(c, { body, headers, status });
     });
   }
 

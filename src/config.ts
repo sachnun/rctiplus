@@ -38,6 +38,15 @@ export const CONFIG = {
   fallbackToken:
     'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ2aWQiOjAsInRva2VuIjoiZjlhYjEyMjg1NmQ3NGYwZiIsInBsIjoid2ViIiwiZGV2aWNlX2lkIjoiMjllNWZkOGEtMDg2YS0xMWVmLTliYTAtMDAxNjNlMDQxOGVjIn0.T0iVov0r2Ai-bhP3NsSoOZhP2WansABSNhrWzvB29-c',
 
+  /**
+   * Baked reference point for the deep-history id→date mapping: the largest
+   * EPG id known to resolve on this date.  Used only as a last resort when
+   * the schedule page is unreachable (the anchor is normally derived from
+   * the live schedule scrape); ids advance ~73/day, so refresh this if the
+   * proxy runs for a long time without the page being reachable.
+   */
+  historyRef: { id: 328842, date: '2026-08-05' },
+
   channels: CHANNELS,
 
   /**

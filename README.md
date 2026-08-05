@@ -1,12 +1,15 @@
 # RCTI+ Proxy for VLC — Full Technical Specification
 
-Reverse-engineered live TV **and** 7-day catch-up replay streaming from
+Reverse-engineered live TV **and** catch-up replay streaming from
 RCTI+ (MNC Group), served through a local proxy so VLC can play it.
 
 - **Scope**: RCTI (1), MNCTV (2), GTV (3), iNews (4)
 - **DRM**: none (`is_drm: "no"`)
 - **Geo-lock**: none (`geoblock: "no"`)
 - **Transport**: HLS (master → variant → MPEG-TS segments), 144p–720p
+- **Replay window**: the web page lists 7 days, but VOD on the CDN is kept
+  **~4 months**; the proxy can discover and play older programs too
+  (see §5.1)
 - **Protection defeated**: Referer ACL + Akamai token auth (`hdnts`/`hdntl`),
   client-side JWT requirement, expiring stream URLs
 
@@ -234,6 +237,43 @@ Notes on the alternative endpoint `www.rctiplus.com/live-getcatchup?date&channel
 (the official ajax list): it returns `Server Error` / empty when called
 externally, so the proxy scrapes the server-rendered page instead (stable).
 
+### 5.1 Deep history — replay beyond the 7-day listing
+
+The 7-day cap is **only the page's listing window** — measured directly:
+
+| Layer | Window | Evidence (2026-08-05) |
+|---|---|---|
+| schedule page / `live-getcatchup` | 7 days | page renders exactly 7 dates; ajax empty |
+| API `/epg/{id}/url` | indefinite | resolves ids as old as 2025-03-27 |
+| CDN `past-event.rctiplus.id` | **~4 months** | masters 200 from 2026-03-31, 502 before |
+
+So replay is genuinely limited by **CDN retention (~4 months)**, not by the
+7-day listing.  The blocker is discoverability: the id of an old program is
+not listed anywhere public.  The proxy solves that by scanning the EPG id
+space (`src/history.ts`):
+
+- **Anchor**: the newest known id comes from the schedule scrape (fallback:
+  baked reference in `config.historyRef`), refreshed on a 12 h TTL.
+- **Boundary search**: binary search over the id range using *real* dates from
+  the API, so the result is immune to id-rate drift.  A growing probe walk
+  (`±1, ±2, ±3, ±5, ±8, … ±144`) steps across the dead gaps that appear in
+  the archive region (older programs get pruned from the API, leaving 400s
+  in runs up to ~70 ids).
+- **Scan**: every id in a window around the located boundary is resolved;
+  programs whose `epg_details.date` matches the target (and channel) are
+  kept.  Recent id regions are dense (~73 ids/day), archive regions sparse.
+- **Playability check**: each candidate's master is fetched from the CDN
+  (with `Referer`); only `200` + `#EXTM3U` counts as playable.  This is what
+  separates a resolvable URL from a deleted file (502).
+- **Fast path**: dates inside the 7-day schedule window reuse the scrape
+  instead of scanning (zero API load for the common case).
+- Dates closer than 7 days: `/history/day` returns instantly from the
+  schedule.  Older dates: first browse scans ~250-350 ids (a few seconds,
+  parallelised at 16), then everything is cached (per-day 10 min, per-id
+  5 min).
+- `fetchRange()` bisects the retention boundary the same way, giving the
+  playable window for a date picker (fuzzy ±2 days at the fuzzy expiry edge).
+
 ---
 
 ## 6. Proxy behavior
@@ -242,11 +282,15 @@ externally, so the proxy scrapes the server-rendered page instead (stable).
 
 | Route | Purpose |
 |---|---|
-| `GET /` | HTML player page (Hono JSX): channel buttons + live video |
+| `GET /` | HTML player page (Hono JSX): channel buttons + live video + inline playable catch-up schedule (fetched from `/schedule`) |
 | `GET /rcti.m3u8` (also `mnctv`, `gtv`, `inews`, `globaltv`) | live master |
+| `GET /{channel}.m3u8?quality={best\|auto\|720\|480\|360\|240\|144}` | live master, quality-pinned (see §6.2 note) |
 | `GET /replay/{epg_id}.m3u8` | catch-up master |
 | `GET /schedule?channel={rcti\|mnctv\|gtv\|inews}` | JSON schedule (10 min cache) |
 | `GET /{channel}/schedule` | same, path-style |
+| `GET /history/day/{YYYY-MM-DD}?channel={slug}` | deep-history listing for one date (playability-verified, 10 min cache) |
+| `GET /history/range` | playable catch-up window `{earliest, latest, days}` (1 h cache) |
+| `GET /hls.js` | local hls.js bundle for the player page (no CDN dependency) |
 | `GET /h/{base64url}` | internal: proxied playlist/segment |
 
 ### 6.2 Request flow (live)
@@ -259,6 +303,16 @@ externally, so the proxy scrapes the server-rendered page instead (stable).
 3. Rewrite every non-`#` line: `new URL(line, masterUrl)` → `/h/<b64url>`.
    (Relative `hdntl=...` lines resolve correctly against the master URL.)
 4. Serve with `Content-Type: application/vnd.apple.mpegurl`, `Cache-Control: no-store`.
+
+> **Quality pinning (proxy-side).** By default the full master (all variants)
+> is served and bitrate is left to client ABR, which can end up stuck on the
+> lowest variant (e.g. 144p ⇒ tiny, frequent segments). Appending
+> `?quality=best` (or `?quality=480` etc.) makes the proxy **filter the master
+> to a single variant** before rewriting, so *every* client (VLC included)
+> plays the same quality. `best` keeps the highest-resolution variant; numeric
+> values keep the highest variant at or below that height. `auto`/absent keeps
+> the full master. `max-height` semantics do not re-encode the stream — the
+> CDN's segment timing (4 s) is untouched.
 
 ### 6.3 Asset flow (`/h/<b64>`)
 
@@ -290,6 +344,8 @@ no `hdntl`) are not redirected.
 | `403 denied by Referer ACL` | Referer missing (direct URL use) | use proxy only |
 | Playback stops after hours | live `hdnts`/`hdntl` expiry | reopen URL; proxy self-heals mid-session |
 | Empty schedule | RCTI+ page structure change | update regex in `fetchSchedule()` |
+| Deep date returns no items | beyond the ~4-month CDN retention (or all programs pruned) | `playable` is `false` / empty listing; pick a newer date |
+| `history:range` earliest is fuzzy ±2 days | programs expire asynchronously near the retention edge | treat it as a hint for the date picker, not an exact boundary |
 
 Token lifetimes: `hdnts` ≈ 10 h (query), `hdntl` ≈ 5 h (variant path),
 replay VOD tokens long-lived. `current_date` / `current_ts` fields in API
@@ -305,7 +361,8 @@ token math.
 - **XMLTV/EPG export**: `/schedule` JSON already contains title/start/end/
   date — trivially convertible to `TVGuide` XMLTV for PVR tools.
 - **Day playlist**: build a multi-entry `.m3u8` pointing at
-  `/replay/{id}.m3u8` per program.
+  `/replay/{id}.m3u8` per program.  `/history/day/{date}` now makes this
+  trivial for any date within the ~4-month retention.
 - **Session cache**: bump `masterCache` TTLs if API rate-limiting is hit.
 
 ---

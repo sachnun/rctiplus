@@ -40,6 +40,39 @@ describe('createApiClient', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it('resolveEpg returns the URL plus program details and caches them', async () => {
+    const { api } = makeApi();
+    const details = {
+      id: 328332,
+      title: 'Si Cantik',
+      start: '00:15',
+      end: '01:30',
+      date: '2026-07-29',
+      channel: 'rcti',
+      channel_id: 1,
+      label: 'catchup',
+    };
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ data: { url: 'https://past/replay.m3u8', epg_details: details } })),
+    );
+    const r1 = await api.resolveEpg('328332');
+    expect(r1.url).toBe('https://past/replay.m3u8');
+    expect(r1.details).toMatchObject({ date: '2026-07-29', channel: 'rcti' });
+    const r2 = await api.resolveEpg('328332');
+    expect(r2).toBe(r1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolveEpg skips details when the API reply lacks them', async () => {
+    const { api } = makeApi();
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ data: { url: 'https://past/replay.m3u8' } })),
+    );
+    const r = await api.resolveEpg('1');
+    expect(r.url).toBe('https://past/replay.m3u8');
+    expect(r.details).toBeUndefined();
+  });
+
   it('throws HttpError when the API reply has no url', async () => {
     const { api } = makeApi();
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ data: {} })));

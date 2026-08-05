@@ -29,14 +29,39 @@ export interface ApiClient {
   resolveMaster(channelId: ChannelId): Promise<string>;
   /** Signed replay master URL for a catch-up EPG id. */
   resolveEpgMaster(epgId: string): Promise<string>;
+  /**
+   * Resolve a catch-up EPG id to its signed VOD URL plus the program details
+   * the API returns alongside it (date/channel/title/start/end).  Cached with
+   * the URL so the deep-history scanner never re-hits the API for the same id.
+   */
+  resolveEpg(epgId: string): Promise<ResolvedEpg>;
   /** Drop the cached live URL so the next request re-resolves fresh tokens. */
   invalidateLive(channelId: ChannelId): void;
+}
+
+/** Program metadata returned by `/epg/{id}/url` (`data.epg_details`). */
+export interface EpgDetails {
+  id: number;
+  title: string;
+  start: string;
+  end: string;
+  date: string;
+  channel: string;
+  channel_id: number;
+  label?: string;
+}
+
+/** A resolved catch-up: the signed VOD master URL plus program details. */
+export interface ResolvedEpg {
+  url: string;
+  details?: EpgDetails;
 }
 
 /** The subset of the API reply the proxy consumes. */
 interface ApiReply {
   data?: {
     url?: string;
+    epg_details?: EpgDetails;
   };
 }
 
@@ -70,19 +95,24 @@ export function createApiClient({
     return json.data.url;
   }
 
-  async function resolveEpgMaster(epgId: string): Promise<string> {
-    const cached = cache.get<string>(`epg:${epgId}`, config.ttl.epg);
+  async function resolveEpg(epgId: string): Promise<ResolvedEpg> {
+    const cached = cache.get<ResolvedEpg>(`epg:${epgId}`, config.ttl.epg);
     if (cached) return cached;
 
     const json = await apiGet(`/epg/${epgId}/url?appierid=vlc-proxy`);
     if (!json.data?.url) throw new HttpError('no replay url in API reply');
-    cache.set(`epg:${epgId}`, json.data.url);
-    return json.data.url;
+    const result: ResolvedEpg = { url: json.data.url, details: json.data.epg_details };
+    cache.set(`epg:${epgId}`, result);
+    return result;
+  }
+
+  async function resolveEpgMaster(epgId: string): Promise<string> {
+    return (await resolveEpg(epgId)).url;
   }
 
   function invalidateLive(channelId: ChannelId): void {
     cache.delete(`live:${channelId}`);
   }
 
-  return { resolveMaster, resolveEpgMaster, invalidateLive };
+  return { resolveMaster, resolveEpgMaster, resolveEpg, invalidateLive };
 }
