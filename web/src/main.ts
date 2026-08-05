@@ -344,7 +344,8 @@ async function selectChannel(ch: string): Promise<void> {
   activeEpgId = null;
   markActive();
   markActiveReplay();
-  sideOpen && setSide(false);
+  // Keep the menu open while browsing channels; only replay (jadwal)
+  // selections dismiss it.
   player.play(streamPath(ch), ch.toUpperCase());
   loadReplay(ch);
 }
@@ -353,6 +354,29 @@ function playEpg(epgId: number, title: string): void {
   sideOpen && setSide(false);
   player.play(`/replay/${epgId}.m3u8`, title);
   markActiveReplay();
+}
+
+/* ------------------------------------------------------- replay list */
+// Dynamic date labels: relative names for near dates, otherwise a localized
+// Indonesian long form (weekday + day + month, year only when different).
+const DAYS = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+const MONTHS = [
+  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
+];
+function fmtDate(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = Math.round((d.getTime() - today.getTime()) / 86_400_000);
+  if (diff === 0) return 'Hari Ini';
+  if (diff === -1) return 'Kemarin';
+  if (diff === 1) return 'Besok';
+  const label = `${DAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  return d.getFullYear() === today.getFullYear()
+    ? label
+    : `${label} ${d.getFullYear()}`;
 }
 
 /* ------------------------------------------------------- replay list */
@@ -369,8 +393,8 @@ let replayObserver: IntersectionObserver | null = null;
 /** Append one date section (header + program rows) to the replay list. */
 function appendDateSection(date: string, items: ScheduleItem[]): void {
   const h = document.createElement('div');
-  h.className = 'section-label';
-  h.textContent = date;
+  h.className = 'section-label replay-date';
+  h.textContent = fmtDate(date);
   replayList.appendChild(h);
   for (const it of items) {
     replayList.appendChild(progRow(it.epg_id, it.title, it.start, it.end));
