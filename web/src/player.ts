@@ -10,6 +10,8 @@ export type PlaybackStatus = 'playing' | 'buffering' | 'error' | 'idle';
 export interface PlayerEvents {
   status(status: PlaybackStatus, message: string): void;
   nowPlaying(label: string): void;
+  /** The current program reached its end (VOD replay finished). */
+  ended(): void;
 }
 
 export class Player {
@@ -40,6 +42,7 @@ export class Player {
     });
     video.addEventListener('ended', () => {
       this.events.status('playing', 'Selesai');
+      this.events.ended();
     });
 
     // Make the BUILT-IN play button work after a blocked autoplay attempt:

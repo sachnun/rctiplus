@@ -85,6 +85,7 @@ const player = new Player(video, {
   nowPlaying: (label) => {
     nowEl.textContent = label;
   },
+  ended: () => onReplayEnded(),
 });
 
 /* ---------------------------------------------------------- fullscreen
@@ -380,6 +381,9 @@ let replayOldest = '';
 let replayBusy = false;
 let replayDone = false;
 let replayObserver: IntersectionObserver | null = null;
+/** epg_id → program for every row rendered in the feed (per current channel).
+    Lets an ended replay find the same program on the next day. */
+const replayFeed = new Map<number, ScheduleItem>();
 
 /** Append one date section (header + program rows) to the replay list. */
 function appendDateSection(date: string, items: ScheduleItem[]): void {
@@ -388,6 +392,7 @@ function appendDateSection(date: string, items: ScheduleItem[]): void {
   h.textContent = fmtDate(date);
   replayList.appendChild(h);
   for (const it of items) {
+    replayFeed.set(it.epg_id, it);
     replayList.appendChild(progRow(it.epg_id, it.title, it.start, it.end));
   }
 }
@@ -444,6 +449,7 @@ async function loadMoreReplay(): Promise<void> {
 
 async function loadReplay(channel: string): Promise<void> {
   replayChannel = channel;
+  replayFeed.clear();
   replayOldest = '';
   replayDone = false;
   replayBusy = false;
@@ -488,6 +494,43 @@ async function loadReplay(channel: string): Promise<void> {
     replayList.appendChild(e);
     replayDone = true;
   }
+}
+
+/* ------------------------------------------------- auto-continue
+   When a replay program ends, jump straight to the same program (title) on
+   the next day if that episode is listed too — a watch-in-order marathon
+   for daily shows. The feed loads newest-first, so the next day's rows are
+   always already rendered (and in `replayFeed`) when the current one ends. */
+function addDays(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return '';
+  d.setDate(d.getDate() + days);
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+function onReplayEnded(): void {
+  if (activeEpgId === null) return;
+  const cur = replayFeed.get(activeEpgId);
+  if (!cur) return;
+  const nextDate = addDays(cur.date, 1);
+  if (!nextDate) return;
+
+  // Same title on the next day; prefer the exact same time slot.
+  let match: ScheduleItem | null = null;
+  for (const it of replayFeed.values()) {
+    if (it.date !== nextDate || it.title !== cur.title) continue;
+    if (it.start === cur.start) {
+      match = it;
+      break;
+    }
+    if (!match) match = it;
+  }
+  if (!match) return;
+
+  statusEl.textContent = 'Lanjut ke program berikutnya…';
+  playEpg(match.epg_id, match.title);
 }
 
 /* ------------------------------------------------------------- boot */
