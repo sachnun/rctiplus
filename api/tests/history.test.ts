@@ -188,4 +188,43 @@ describe('createHistoryService', () => {
     const b = await service.fetchRange();
     expect(b).toBe(a);
   });
+
+  it('walks back one playable day at a time for infinite scroll', async () => {
+    const { service } = makeEnv();
+    const first = await service.fetchPrev('2026-07-29', 'rcti');
+    expect(first.date).toBe('2026-07-28');
+    expect(first.end).toBe(false);
+    expect(first.items.length).toBeGreaterThan(0);
+    expect(first.items.every((i) => i.channel === 'rcti' && i.playable)).toBe(true);
+
+    // The cursor advances: the next step picks up right after the last one.
+    const second = await service.fetchPrev(first.date!, 'rcti');
+    expect(second.date).toBe('2026-07-27');
+  });
+
+  it('ends the feed at the earliest playable date', async () => {
+    const { service } = makeEnv();
+    const range = await service.fetchRange();
+    const res = await service.fetchPrev(range.earliest, 'rcti'); // at the boundary
+    expect(res.end).toBe(true);
+    expect(res.date).toBeNull();
+  });
+
+  it('skips days that have no playable content', async () => {
+    const { service } = makeEnv();
+    // Sparse archive (from day 60 back) — a step near the sparse edge still
+    // lands on a day with playable items, not an empty one.
+    const sparse = makeEnv(60);
+    const res = await sparse.service.fetchPrev('2026-05-06', 'rcti');
+    expect(res.end).toBe(false);
+    expect(res.date).toBeDefined();
+    expect(res.items.some((i) => i.playable)).toBe(true);
+    expect(res.date! < '2026-05-06').toBe(true);
+  });
+
+  it('rejects invalid dates on fetchPrev', async () => {
+    const { service } = makeEnv();
+    await expect(service.fetchPrev('bad')).rejects.toMatchObject({ status: 400 });
+    await expect(service.fetchPrev('2026-09-01')).rejects.toMatchObject({ status: 400 });
+  });
 });

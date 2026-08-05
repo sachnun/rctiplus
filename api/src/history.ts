@@ -49,12 +49,29 @@ export interface HistoryRange {
   days: number;
 }
 
+/** Result of walking one step further back in time (for infinite scroll). */
+export interface PrevResult {
+  /** The previous playable day found, or null when none remain before `earliest`. */
+  date: string | null;
+  /** Earliest playable date overall — the hard stop for the walk. */
+  earliest: string;
+  items: DayItem[];
+  /** True when there are no more days to load (stop the scroll feed). */
+  end: boolean;
+}
+
 /** Deep-history discovery service (see module doc for the algorithm). */
 export interface HistoryService {
   /** Programs for one calendar date, optionally filtered by channel. */
   fetchDay(date: string, channel?: ChannelSlug): Promise<DayResult>;
   /** Earliest/latest dates with playable catch-up content. */
   fetchRange(): Promise<HistoryRange>;
+  /**
+   * The nearest playable day strictly before `before`, for infinite scroll.
+   * Walks backward one day at a time (reusing the per-day cache) until it
+   * finds a day with playable items or hits the archive `earliest` boundary.
+   */
+  fetchPrev(before: string, channel?: ChannelSlug): Promise<PrevResult>;
 }
 
 const IDS_PER_DAY = 73; // measured: ~73 epg ids per calendar day across 4 channels
@@ -304,6 +321,27 @@ export function createHistoryService({
     return result;
   }
 
+  async function fetchPrev(before: string, channel?: ChannelSlug): Promise<PrevResult> {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(before)) {
+      throw new HttpError('invalid date, use YYYY-MM-DD', 400);
+    }
+    const [anchor, range] = await Promise.all([getAnchor(), fetchRange()]);
+    if (before > anchor.date) {
+      throw new HttpError(`date ${before} is after the newest program`, 400);
+    }
+    const { earliest } = range;
+
+    let date = addDays(before, -1);
+    while (date >= earliest) {
+      const day = await fetchDay(date, channel);
+      if (day.items.some((it) => it.playable)) {
+        return { date, earliest, items: day.items, end: false };
+      }
+      date = addDays(date, -1);
+    }
+    return { date: null, earliest, items: [], end: true };
+  }
+
   async function fetchRange(): Promise<HistoryRange> {
     const cached = cache.get<HistoryRange>('history:range', TTL.range);
     if (cached) return cached;
@@ -348,5 +386,5 @@ export function createHistoryService({
     return result;
   }
 
-  return { fetchDay, fetchRange };
+  return { fetchDay, fetchRange, fetchPrev };
 }

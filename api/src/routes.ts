@@ -8,8 +8,16 @@ import { unb64, type QualityFilter } from './hls.js';
 import type { ScheduleService } from './schedule.js';
 import type { HistoryService } from './history.js';
 import type { Config, ChannelSlug, ChannelId } from './config.js';
-import { hlsJsBundle } from './hlsjs.js';
-import { playerPage } from './player.js';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { serveStatic } from '@hono/node-server/serve-static';
+
+/**
+ * Production frontend: the built Vite app lives in `web/dist`; the API serves
+ * it so a single port hosts the player, the JSON API and the HLS proxy.
+ * In development the Vite dev server (port 5173) proxies to this API instead.
+ */
+const WEB_DIST = fileURLToPath(new URL('../../web/dist', import.meta.url));
 
 /** Convert a non-304 ProxiedBody body to something Hono accepts. */
 function toBodyInit(
@@ -42,7 +50,6 @@ export interface Services {
   cdn: CdnProxy;
   schedule: ScheduleService;
   history: HistoryService;
-  port: number;
 }
 
 /** Displayed channels (first slug per channel id — dedupes the gtv/globaltv alias). */
@@ -72,27 +79,10 @@ function qualityFilter(q: string | undefined): QualityFilter | undefined {
 }
 
 export function registerRoutes(app: Hono, services: Services): void {
-  const { config, api, cdn, schedule, history, port } = services;
+  const { config, api, cdn, schedule, history } = services;
 
-  app.get('/', (c) => c.html(playerPage(port, playerChannels(config))));
+  app.get('/channels', (c) => c.json({ channels: playerChannels(config) }));
   app.get('/favicon.ico', (c) => c.body(null, 204));
-
-  /* ------------------------------------------------ local hls.js bundle */
-  // The player page loads hls.js from this proxy instead of an external CDN
-  // (jsdelivr is intermittently unreachable from some networks).
-  app.get('/hls.js', async (c) => {
-    try {
-      return c.body(await hlsJsBundle(), 200, {
-        'Content-Type': 'application/javascript; charset=utf-8',
-        'Cache-Control': 'public, max-age=86400',
-      });
-    } catch (e) {
-      return c.text(
-        'hls.js bundle unavailable: ' + (e instanceof Error ? e.message : e),
-        500,
-      );
-    }
-  });
 
   /* --------------------------------------------- proxied HLS asset (/h/<b64>) */
   app.get('/h/:b64', async (c) => {
@@ -157,6 +147,25 @@ export function registerRoutes(app: Hono, services: Services): void {
     }
   });
 
+  // /history/prev?before=YYYY-MM-DD&channel=<slug> — next older day for the
+  // infinite-scroll replay feed (see web/src/main.ts -> loadMoreReplay).
+  app.get('/history/prev', async (c) => {
+    const before = c.req.query('before');
+    const q = c.req.query('channel');
+    const slug = q ? (q.toLowerCase() as ChannelSlug) : undefined;
+    if (slug && channelId(config, slug) === undefined) {
+      return c.text(`unknown channel: ${slug}`, 404);
+    }
+    if (!before) return c.text('missing before=YYYY-MM-DD', 400);
+    try {
+      const data = await history.fetchPrev(before, slug);
+      return c.json(data, 200, { 'Cache-Control': 'no-store' });
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 400) return c.text(e.message, 400);
+      throw e;
+    }
+  });
+
   /* ------------------------------------------------- catch-up: /replay/<epg>.m3u8 */
   // Hono (this version) mis-parses `:param.ext` segment patterns, so replay
   // uses a wildcard and strips the optional .m3u8 suffix manually.
@@ -187,6 +196,13 @@ export function registerRoutes(app: Hono, services: Services): void {
       });
       return sendProxied(c, { body, headers, status });
     });
+  }
+
+  /* ---------------------------------------- built frontend (web/dist) */
+  // Registered last so the API routes above always win; missing files fall
+  // through to app.notFound(). Skipped entirely in dev when dist is absent.
+  if (existsSync(WEB_DIST)) {
+    app.get('*', serveStatic({ root: WEB_DIST }));
   }
 
   app.notFound((c) => c.text(`unknown route: ${c.req.path}`, 404));

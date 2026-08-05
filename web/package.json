@@ -1,0 +1,22 @@
+{
+  "name": "@rctiplus/web",
+  "version": "2.1.0",
+  "description": "RCTI+ browser player — immersive minimalist Android-TV UI (Vite + Tailwind)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hls.js": "^1.6.16"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.7.0",
+    "vite": "^8.2.0"
+  }
+}

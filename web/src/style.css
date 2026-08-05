@@ -1,0 +1,109 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans:
+    system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+}
+
+/* -------------------------------------------------------------- base */
+html,
+body,
+#app {
+  height: 100%;
+}
+body {
+  background: #000;
+  color: #fff;
+  overflow: hidden;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ----------------------------------------------------- HUD / sidebar
+   Overlays are invisible by default; `hud-on` shows the chrome, `side-open`
+   pins the sidebar even while the rest of the chrome idles away. */
+.hud,
+#side {
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
+}
+body.hud-on .hud {
+  opacity: 1;
+  pointer-events: auto;
+}
+#side {
+  transform: translateX(-100%);
+}
+body.side-open #side {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+/* -------------------------------------------------------- focus ring */
+.focusable {
+  outline: none;
+}
+.focusable:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: -2px;
+}
+video:focus-visible {
+  outline: none;
+}
+
+/* ------------------------------------------------------------- lists */
+.section-label {
+  padding: 14px 16px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 9px 16px;
+  text-align: left;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.65);
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.row:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.9);
+}
+.row.active {
+  border-left-color: #fff;
+  color: #fff;
+}
+.row .idx,
+.row .time {
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.row .idx {
+  min-width: 22px;
+}
+.row .time {
+  min-width: 72px;
+}
+.row.active .idx,
+.row.active .time {
+  color: rgba(255, 255, 255, 0.55);
+}
+.row .title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

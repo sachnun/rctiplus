@@ -1,30 +1,22 @@
 {
-  "name": "rcti-proxy",
-  "version": "2.0.0",
-  "description": "RCTI+ live TV + catch-up replay proxy for VLC, built on Hono + TypeScript",
-  "type": "module",
-  "main": "dist/index.js",
+  "name": "rcti-plus",
+  "version": "2.1.0",
+  "description": "RCTI+ live TV + catch-up replay proxy — monorepo (api: Hono, web: Vite)",
+  "private": true,
+  "workspaces": [
+    "api",
+    "web"
+  ],
   "scripts": {
-    "start": "node --import tsx src/index.ts",
-    "dev": "node --import tsx --watch src/index.ts",
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "engines": {
-    "node": ">=20.6"
-  },
-  "dependencies": {
-    "@hono/node-server": "^1.19.17",
-    "hls.js": "^1.6.16",
-    "hono": "^4.13.0",
-    "tsx": "^4.19.0"
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w api\" \"npm run dev -w web\"",
+    "dev:api": "npm run dev -w api",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w web && npm run build -w api",
+    "typecheck": "npm run typecheck -w api && npm run typecheck -w web",
+    "test": "npm test -w api"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "typescript": "^5.7.0",
-    "vitest": "^4.1.10"
+    "concurrently": "^10.0.4"
   },
   "allowScripts": {
     "esbuild@0.28.1": true

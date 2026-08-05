@@ -43,6 +43,12 @@ function makeApp() {
       generated_at: new Date().toISOString(),
       items: [],
     })),
+    fetchPrev: vi.fn(async (before: string, channel?: string) => ({
+      date: null,
+      earliest: '2026-03-31',
+      items: [],
+      end: true,
+    })),
     fetchRange: vi.fn(async () => ({
       earliest: '2026-03-31',
       latest: '2026-08-05',
@@ -53,7 +59,6 @@ function makeApp() {
   const app = new Hono();
   registerRoutes(app, {
     config: CONFIG,
-    port: 8080,
     api: api as unknown as ApiClient,
     cdn: cdn as unknown as CdnProxy,
     schedule: schedule as unknown as ScheduleService,
@@ -63,31 +68,18 @@ function makeApp() {
 }
 
 describe('routes', () => {
-  it('serves the HTML player page on /', async () => {
-    const { app } = makeApp();
-    const res = await app.request('http://x/');
-    expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toContain('text/html');
-    const text = await res.text();
-    expect(text).toContain('<!doctype html>');
-    expect(text).toContain('RCTI+ Proxy');
-    expect(text).toContain('<video');
-    expect(text).toContain('data-ch="rcti"');
-    expect(text).not.toContain('<script>const a =');
-  });
-
   it('returns 204 for favicon.ico', async () => {
     const { app } = makeApp();
     expect((await app.request('http://x/favicon.ico')).status).toBe(204);
   });
 
-  it('serves the local hls.js bundle for the player page', async () => {
+  it('exposes the channel list for the web player', async () => {
     const { app } = makeApp();
-    const res = await app.request('http://x/hls.js');
+    const res = await app.request('http://x/channels');
     expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toContain('javascript');
-    const text = await res.text();
-    expect(text).toContain('hls.js');
+    expect(await res.json()).toEqual({
+      channels: ['rcti', 'mnctv', 'gtv', 'inews'],
+    });
   });
 
   it('404s unknown channels and routes', async () => {
@@ -181,6 +173,41 @@ describe('routes', () => {
     expect(res.headers.get('content-type')).toContain('json');
     const body = await res.json();
     expect(body.date).toBe('2026-07-29');
+  });
+
+  it('serves the previous playable day at /history/prev', async () => {
+    const { app, history } = makeApp();
+    history.fetchPrev.mockResolvedValueOnce({
+      date: '2026-07-28',
+      earliest: '2026-03-31',
+      items: [
+        {
+          epg_id: 1,
+          title: 'Program',
+          start: '10:00',
+          end: '11:00',
+          channel: 'rcti',
+          date: '2026-07-28',
+          url: '/replay/1.m3u8',
+          playable: true,
+        },
+      ],
+      end: false,
+    });
+    const res = await app.request('http://x/history/prev?before=2026-07-29&channel=rcti');
+    expect(res.status).toBe(200);
+    expect(history.fetchPrev).toHaveBeenCalledWith('2026-07-29', 'rcti');
+    const body = await res.json();
+    expect(body.date).toBe('2026-07-28');
+    expect(body.end).toBe(false);
+  });
+
+  it('requires before= on /history/prev and validates the channel', async () => {
+    const { app, history } = makeApp();
+    history.fetchPrev.mockClear();
+    expect((await app.request('http://x/history/prev?channel=rcti')).status).toBe(400);
+    expect((await app.request('http://x/history/prev?before=2026-07-29&channel=nope')).status).toBe(404);
+    expect(history.fetchPrev).not.toHaveBeenCalled();
   });
 
   it('serves the playable archive range at /history/range', async () => {
