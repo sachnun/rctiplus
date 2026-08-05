@@ -15,14 +15,17 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import com.rctiplus.tv.data.Api
 import com.rctiplus.tv.data.Channel
+import com.rctiplus.tv.data.Config
 import com.rctiplus.tv.data.ReplayItem
 import com.rctiplus.tv.ui.MenuAdapter
 import kotlinx.coroutines.CoroutineScope
@@ -52,6 +55,13 @@ class MainActivity : Activity() {
     private lateinit var menuFooter: TextView
 
     private var player: ExoPlayer? = null
+
+    // Streaming source tracking: which play kind is loaded and, for token
+    // expiry self-heal, a bounded retry budget plus a guard against a slower
+    // resolve for an older channel landing after a newer one.
+    private var currentKind = ""
+    private var playGeneration = 0
+    private var playRetries = 0
 
     private val channels: List<Channel> = Api.channels()
     private val channelRowViews = mutableListOf<View>()
@@ -118,7 +128,17 @@ class MainActivity : Activity() {
         })
 
         // Boot: auto-play the first channel's live feed (like the web).
-        val exo = ExoPlayer.Builder(this).build()
+        // The HTTP stack sends the Referer header the CDN ACL demands on every
+        // HLS request (segment, playlist) — this is what lets a fully-local
+        // app play RCTI+ streams without any proxy.
+        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setUserAgent(Config.USER_AGENT)
+            .setDefaultRequestProperties(
+                mapOf("Referer" to Config.REFERER, "Origin" to Config.ORIGIN),
+            )
+        val exo = ExoPlayer.Builder(this)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(httpDataSourceFactory))
+            .build()
         exo.playWhenReady = true
         exo.addListener(playerListener)
         player = exo
@@ -162,7 +182,7 @@ class MainActivity : Activity() {
         activeEpgId = null
         markActiveChannel()
         menuAdapter.setActive(null)
-        play(Api.liveUrl(slug), name.uppercase())
+        play("live:$slug", name.uppercase())
         loadReplay(slug)
     }
 
@@ -187,18 +207,44 @@ class MainActivity : Activity() {
         activeEpgId = item.epgId
         menuAdapter.setActive(item.epgId)
         setPanelOpen(false)
-        play(Api.replayUrl(item.epgId), item.title)
+        play("epg:${item.epgId}", item.title)
     }
 
     /* ------------------------------- playback ------------------------------ */
 
-    private fun play(url: String, label: String) {
+    /** Start playback of a kind (`live:<slug>` | `epg:<id>`), resolving its
+        best-variant URL asynchronously first. */
+    private fun play(kind: String, label: String) {
+        currentKind = kind
         nowLabel.text = label
+        playRetries = 0
+        resolveAndPlay()
+    }
+
+    private fun resolveAndPlay() {
+        val gen = ++playGeneration
+        val kind = currentKind
         setStatus(getString(R.string.status_loading), R.color.status_buffering)
-        player?.let { exo ->
-            exo.playWhenReady = true
-            exo.setMediaItem(MediaItem.fromUri(url))
-            exo.prepare()
+        scope.launch {
+            val url = try {
+                when {
+                    kind.startsWith("live:") -> Api.liveUrl(kind.removePrefix("live:"))
+                    kind.startsWith("epg:") -> Api.replayUrl(kind.removePrefix("epg:").toLong())
+                    else -> throw IllegalArgumentException("bad kind: $kind")
+                }
+            } catch (e: Exception) {
+                if (gen == playGeneration) {
+                    setStatus("Resolve failed: ${e.message}", R.color.status_error)
+                }
+                return@launch
+            }
+            // A newer play() won while we were resolving — drop the stale URL.
+            if (gen != playGeneration) return@launch
+            player?.let { exo ->
+                exo.playWhenReady = true
+                exo.setMediaItem(MediaItem.fromUri(url))
+                exo.prepare()
+            }
         }
     }
 
@@ -224,7 +270,14 @@ class MainActivity : Activity() {
 
         override fun onPlayerError(error: PlaybackException) {
             val exo = player
-            if (exo != null && exo.playbackState != Player.STATE_IDLE) {
+            if (exo == null || exo.playbackState == Player.STATE_IDLE) return
+            // hdnts/hdntl tokens expire mid-stream — drop the cached URL and
+            // re-resolve a fresh master (like the proxy's 302 self-heal).
+            if (playRetries < MAX_PLAY_RETRIES && currentKind.isNotEmpty()) {
+                playRetries++
+                Api.invalidateKind(currentKind)
+                resolveAndPlay()
+            } else {
                 setStatus("Playback error: ${error.message}", R.color.status_error)
             }
         }
@@ -407,5 +460,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val CHROME_TIMEOUT_MS = 3500L
+        private const val MAX_PLAY_RETRIES = 3
     }
 }

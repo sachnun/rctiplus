@@ -365,6 +365,32 @@ no `hdntl`) are not redirected.
 - The visitor JWT is refreshed periodically; a static fallback is baked in
   so the proxy survives page-template changes.
 
+### 6.6 Native app — same contract, no proxy
+
+`packages/rcti-apk` is a **fully-local native** client that implements the
+same contract as this proxy inside the app, so it needs no server:
+
+| Proxy module | Kotlin mirror | Notes |
+|---|---|---|
+| `token.ts` | `TokenManager.kt` | extracts fresh visitor JWT from the page; **no baked fallback token** in the APK |
+| `rctiplus.ts` | `RctiApi.kt` | `live/{id}/url` + `epg/{id}/url` with TTL cache |
+| `schedule.ts` | `ScheduleScraper.kt` | same `clickCatchup` page regex + entity decode |
+| `history.ts` | `History.kt` | anchor, boundary binary search, WALK probe, per-day cache |
+| `hls.ts` (filter/verify) | `Hls.kt` | picks the best variant; CDN verify for retention edge |
+| routes (`/channels`, …) | `Api.kt` facade | channel list mirrors `config.ts` `CHANNELS` |
+
+Playback: ExoPlayer is configured with `DefaultHttpDataSource.Factory`
+sending `Referer: https://www.rctiplus.com/` (plus `Origin` and the Chrome
+`User-Agent`) on every HLS request — this is what replaces the proxy's
+playlist rewriting for a native player that fetches segments itself. On
+`PlaybackException` the app invalidates the cached URL and re-resolves a
+fresh master (bounded retries) — the same self-heal as §6.4.
+
+**Shared contract**: TS↔Kotlin cannot share code (Cloudflare Workers have no
+Kotlin runtime), so the constants live once in `config.ts` and are mirrored
+in the APK's `Config.kt` (apiKey, Referer, channel→id map, history tuning).
+Keep the two in sync when anything changes.
+
 ---
 
 ## 7. Failure modes & limits
