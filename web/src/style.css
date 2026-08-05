@@ -55,6 +55,36 @@ video:focus-visible {
   outline: none;
 }
 
+/* -------------------------------------------- backdrop / side overlay
+   A visible dim layer covers the video while the panel is open; clicking it
+   closes the panel. Sits above the video but below the panel & menu button. */
+#backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+body.side-open #backdrop {
+  opacity: 1;
+  pointer-events: auto;
+}
+#side {
+  position: relative;
+  z-index: 20;
+}
+#menu-btn,
+.hud {
+  z-index: 30;
+}
+/* While the panel is open the top navbar sinks below the dim & sidebar. */
+body.side-open #menu-btn,
+body.side-open .hud {
+  z-index: 5;
+}
+
 /* ------------------------------------------------------------- lists */
 .section-label {
   padding: 14px 16px 6px;

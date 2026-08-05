@@ -18,6 +18,8 @@ app.innerHTML = `
   <video id="video" class="absolute inset-0 h-full w-full object-contain"
          controls playsinline preload="auto"></video>
 
+  <div id="backdrop" aria-hidden="true"></div>
+
   <div class="hud pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between
               p-4 text-sm">
     <div>
@@ -27,7 +29,7 @@ app.innerHTML = `
   </div>
 
   <button id="menu-btn" type="button"
-    class="hud focusable absolute bottom-4 right-4 rounded-sm border border-white/15
+    class="hud focusable absolute top-4 right-4 rounded-sm border border-white/15
            bg-black/60 px-4 py-2.5 text-sm text-white/70 hover:text-white hover:border-white/40">
     Channels
   </button>
@@ -51,6 +53,7 @@ app.innerHTML = `
 `;
 
 const video = document.getElementById('video') as HTMLVideoElement;
+const backdrop = document.getElementById('backdrop') as HTMLDivElement;
 const nowEl = document.getElementById('now') as HTMLDivElement;
 const statusEl = document.getElementById('status') as HTMLDivElement;
 const menuBtn = document.getElementById('menu-btn') as HTMLButtonElement;
@@ -62,6 +65,7 @@ const qualitySel = document.getElementById('quality') as HTMLSelectElement;
 /* ----------------------------------------------------------- state */
 let channels: string[] = [];
 let activeChannel = '';
+let activeEpgId: number | null = null;
 let quality: Quality = 'best';
 
 let sideOpen = false;
@@ -104,11 +108,23 @@ function setSide(open: boolean): void {
   sideOpen = open;
   document.body.classList.toggle('side-open', open);
   wake();
-  if (open && channelList.querySelector('.focusable')) {
-    (channelList.querySelector('.focusable') as HTMLElement).focus();
+  if (open) {
+    const activeReplay = replayList.querySelector('.row.active') as HTMLElement | null;
+    activeReplay?.scrollIntoView({ block: 'center' });
+    const target = activeReplay ??
+      (channelList.querySelector('.focusable') as HTMLElement | null);
+    target?.focus();
   }
 }
 menuBtn.addEventListener('click', () => setSide(!sideOpen));
+// Clicking the dimmed overlay behind the open panel closes it.
+backdrop.addEventListener('click', () => setSide(false));
+document.addEventListener('click', (e) => {
+  if (!sideOpen) return;
+  const t = e.target as HTMLElement | null;
+  if (t && (t.closest('#side') || t.closest('#menu-btn'))) return;
+  setSide(false);
+});
 
 /* ------------------------------------------------- directional focus
    Remote-friendly: arrows move to the nearest focusable in that direction;
@@ -219,6 +235,7 @@ function progRow(epgId: number, title: string, start: string, end: string): HTML
   b.innerHTML = `<span class="time">${start}–${end}</span>
                  <span class="title"></span>`;
   (b.querySelector('.title') as HTMLSpanElement).textContent = title;
+  if (epgId === activeEpgId) b.classList.add('active');
   b.addEventListener('click', () => playEpg(epgId, title));
   return b;
 }
@@ -238,6 +255,15 @@ function markActive(): void {
     );
   }
 }
+function markActiveReplay(): void {
+  for (const el of replayList.querySelectorAll('.row')) {
+    const epg = (el as HTMLElement).getAttribute('data-epg');
+    el.classList.toggle(
+      'active',
+      epg !== null && activeEpgId !== null && Number(epg) === activeEpgId,
+    );
+  }
+}
 
 /* ---------------------------------------------------------- playback */
 function streamPath(slug: string): string {
@@ -245,14 +271,18 @@ function streamPath(slug: string): string {
 }
 async function selectChannel(ch: string): Promise<void> {
   activeChannel = ch;
+  activeEpgId = null;
   markActive();
+  markActiveReplay();
   sideOpen && setSide(false);
   player.play(streamPath(ch), ch.toUpperCase());
   loadReplay(ch);
 }
 function playEpg(epgId: number, title: string): void {
+  activeEpgId = epgId;
   sideOpen && setSide(false);
   player.play(`/replay/${epgId}.m3u8`, title);
+  markActiveReplay();
 }
 
 /* ------------------------------------------------------- replay list */
@@ -362,6 +392,7 @@ async function loadReplay(channel: string): Promise<void> {
       .sort()
       .reverse()
       .forEach((date) => appendDateSection(date, byDate.get(date) ?? []));
+    markActiveReplay();
     // Oldest date shown becomes the cursor for the next /history/prev step.
     replayOldest = [...byDate.keys()].sort()[0]!;
     addSentinel();
