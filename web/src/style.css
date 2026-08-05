@@ -54,6 +54,11 @@ body.side-open #side {
 video:focus-visible {
   outline: none;
 }
+/* Fullscreen is handled app-wide (so the menu stays visible); the native
+   controls' own fullscreen button would fullscreen just the video. */
+video::-webkit-media-controls-fullscreen-button {
+  display: none;
+}
 
 /* -------------------------------------------- backdrop / side overlay
    A visible dim layer covers the video while the panel is open; clicking it
@@ -83,6 +88,12 @@ body.side-open #backdrop {
 body.side-open #menu-btn,
 body.side-open .hud {
   z-index: 5;
+}
+
+/* When the status line is empty (sub-label kosong, e.g. normal playback)
+   the title lines up with the top-right buttons — no size or style change. */
+body.center-title .hud #now {
+  padding-block: 0.625rem; /* matches the buttons' py-2.5 so they align */
 }
 
 /* ------------------------------------------------------------- lists */

@@ -28,11 +28,16 @@ app.innerHTML = `
     </div>
   </div>
 
-  <button id="menu-btn" type="button"
-    class="hud focusable absolute top-4 right-4 rounded-sm border border-white/15
-           bg-black/60 px-4 py-2.5 text-sm text-white/70 hover:text-white hover:border-white/40">
-    Channels
-  </button>
+  <div class="absolute top-4 right-4 flex gap-2">
+    <button id="fs-btn" type="button" aria-label="Layar penuh"
+      class="hud focusable rounded-sm border border-white/15 bg-black/60
+             px-3.5 py-2.5 text-white/70 hover:text-white hover:border-white/40"></button>
+    <button id="menu-btn" type="button"
+      class="hud focusable rounded-sm border border-white/15 bg-black/60
+             px-4 py-2.5 text-sm text-white/70 hover:text-white hover:border-white/40">
+      Channels
+    </button>
+  </div>
 
   <aside id="side" aria-label="Menu"
     class="flex h-full w-80 max-w-[85vw] flex-col border-r border-white/10 bg-black">
@@ -57,6 +62,7 @@ const backdrop = document.getElementById('backdrop') as HTMLDivElement;
 const nowEl = document.getElementById('now') as HTMLDivElement;
 const statusEl = document.getElementById('status') as HTMLDivElement;
 const menuBtn = document.getElementById('menu-btn') as HTMLButtonElement;
+const fsBtn = document.getElementById('fs-btn') as HTMLButtonElement;
 const side = document.getElementById('side') as HTMLElement;
 const channelList = document.getElementById('channels') as HTMLDivElement;
 const replayList = document.getElementById('replay') as HTMLDivElement;
@@ -74,6 +80,8 @@ let chromeTimer = 0;
 const player = new Player(video, {
   status: (kind, msg) => {
     statusEl.textContent = msg;
+    // No status line (e.g. while playing) → float the program title centered.
+    document.body.classList.toggle('center-title', msg.trim() === '');
     statusEl.className = `mt-0.5 text-xs ${
       kind === 'error'
         ? 'text-red-400'
@@ -87,6 +95,68 @@ const player = new Player(video, {
     nowEl.textContent = label;
   },
 });
+
+/* ---------------------------------------------------------- fullscreen
+   The native video controls fullscreen only the <video> element, hiding the
+   custom HUD (channel label + Channels menu). Fullscreen is therefore always
+   app-wide: the toggle below enters it on #app, and any video-only fullscreen
+   (native button, TV browser auto-fullscreen) is migrated up to the app so
+   the menu stays reachable while watching. */
+const FS_ENTER_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+  class="h-4 w-4" aria-hidden="true">
+  <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+</svg>`;
+const FS_EXIT_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+  class="h-4 w-4" aria-hidden="true">
+  <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
+</svg>`;
+
+const docAny = document as Document & {
+  webkitFullscreenElement?: Element | null;
+  webkitExitFullscreen?: () => Promise<void>;
+};
+function isFullscreen(): boolean {
+  return !!(document.fullscreenElement || docAny.webkitFullscreenElement);
+}
+function fsRequest(el: HTMLElement): Promise<void> {
+  if (el.requestFullscreen) return el.requestFullscreen();
+  const w = el as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> };
+  if (w.webkitRequestFullscreen) return w.webkitRequestFullscreen();
+  return Promise.reject(new Error('Fullscreen tidak didukung.'));
+}
+function fsExit(): Promise<void> {
+  if (document.exitFullscreen) return document.exitFullscreen();
+  if (docAny.webkitExitFullscreen) return docAny.webkitExitFullscreen();
+  return Promise.resolve();
+}
+function toggleFullscreen(): void {
+  if (isFullscreen()) fsExit().catch(() => {});
+  else fsRequest(app).catch(() => {});
+}
+function syncFsIcon(): void {
+  const fs = isFullscreen();
+  fsBtn.innerHTML = fs ? FS_EXIT_ICON : FS_ENTER_ICON;
+  fsBtn.setAttribute('aria-label', fs ? 'Keluar layar penuh' : 'Layar penuh');
+}
+fsBtn.addEventListener('click', toggleFullscreen);
+function migrateVideoFullscreen(): void {
+  const fsEl = document.fullscreenElement || docAny.webkitFullscreenElement;
+  if (fsEl === video) {
+    // Video-only fullscreen hides the HUD; collapse it and re-enter on #app.
+    fsExit().catch(() => {});
+    const enter = () => {
+      if (!isFullscreen()) fsRequest(app).catch(() => {});
+    };
+    enter(); // same-task: the user's click activation is freshest here
+    requestAnimationFrame(enter); // retry if the exit hadn't settled
+  }
+  syncFsIcon();
+}
+document.addEventListener('fullscreenchange', migrateVideoFullscreen);
+document.addEventListener('webkitfullscreenchange', migrateVideoFullscreen);
+syncFsIcon();
 
 /* --------------------------------------------------------- chrome HUD
    Any activity wakes the chrome; it idles away after a few quiet seconds
