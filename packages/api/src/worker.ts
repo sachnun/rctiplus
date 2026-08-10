@@ -10,16 +10,7 @@
  * Deploy from the repo root (config lives in wrangler.toml at the root):
  *   npx wrangler deploy
  */
-import { Hono } from 'hono';
-
-import { CONFIG } from './config.js';
-import { createCache } from './cache.js';
-import { createTokenManager } from './token.js';
-import { createApiClient } from './rctiplus.js';
-import { createCdnProxy } from './hls.js';
-import { createScheduleService } from './schedule.js';
-import { createHistoryService } from './history.js';
-import { registerRoutes } from './routes.js';
+import { createApiApp } from './app.js';
 
 /** Minimal stand-in for the Workers `Fetcher` type (avoids workers-types dep). */
 interface AssetsBinding {
@@ -30,15 +21,7 @@ export interface Env extends Record<string, unknown> {
   ASSETS: AssetsBinding;
 }
 
-const cache = createCache();
-const tokenManager = createTokenManager({ config: CONFIG });
-const api = createApiClient({ config: CONFIG, cache, tokenManager });
-const cdn = createCdnProxy({ config: CONFIG, api, cache });
-const schedule = createScheduleService({ config: CONFIG, cache });
-const history = createHistoryService({ config: CONFIG, cache, api, schedule });
-
-const app = new Hono<{ Bindings: Env }>();
-registerRoutes(app, { config: CONFIG, api, cdn, schedule, history });
+const app = createApiApp<Env>();
 
 // Static assets fallback (packages/web/dist) — registered last so API
 // routes win.

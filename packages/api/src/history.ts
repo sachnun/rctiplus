@@ -140,6 +140,316 @@ function addDays(date: string, n: number): string {
   return new Date(parseDate(date) + n * 86400000).toISOString().slice(0, 10);
 }
 
+/** Newest known (id, date) pair: from the schedule scrape, else extrapolated. */
+async function getAnchor(
+  config: Config,
+  cache: Cache,
+  schedule: ScheduleService,
+): Promise<{ id: number; date: string }> {
+  const cached = cache.get<{ id: number; date: string }>('history:anchor', TTL.anchor);
+  if (cached) return cached;
+
+  try {
+    const sched = await schedule.fetchSchedule('rcti');
+    let maxId = -1;
+    let maxDate = '';
+    for (const it of sched.items) {
+      if (it.epg_id > maxId) {
+        maxId = it.epg_id;
+        maxDate = it.date;
+      }
+    }
+    if (maxId > 0 && maxDate) {
+      const anchor = { id: maxId, date: maxDate };
+      cache.set('history:anchor', anchor);
+      return anchor;
+    }
+  } catch {
+    /* schedule unreachable — fall through to the baked reference */
+  }
+
+  // Last resort: extrapolate the baked reference by elapsed days.
+  const days = Math.max(0, daysBetween(config.historyRef.date, todayLocal()));
+  return {
+    id: config.historyRef.id + days * IDS_PER_DAY,
+    date: todayLocal(),
+  };
+}
+
+/** Resolve an id, walking across dead gaps to the nearest live program. */
+async function probeNear(api: ApiClient, id: number): Promise<ResolvedEpg | null> {
+  for (const off of WALK) {
+    const cand = id + off;
+    if (cand < 0) continue;
+    try {
+      const r = await api.resolveEpg(String(cand));
+      if (r.details) return r;
+    } catch {
+      /* non-catchup slot (ads, pruned program) — keep walking */
+    }
+  }
+  return null;
+}
+
+/** Verify the CDN still serves a master playlist for a VOD url. */
+async function verifyMaster(config: Config, url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        Referer: config.referer,
+        Origin: config.origin,
+        'User-Agent': config.userAgent,
+        Accept: '*/*',
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(config.timeouts.cdn),
+    });
+    if (!res.ok) return false;
+    return (await res.text()).startsWith('#EXTM3U');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Binary-search the id range for the first live id whose program date is on
+ * or after the target date.  Live ids advance monotonically with time (the
+ * sparse archive region still orders correctly), so this pins the target
+ * date's slot window cheaply and is immune to id-rate drift.
+ */
+async function locateBoundary(
+  anchor: { id: number; date: string },
+  date: string,
+  api: ApiClient,
+  cache: Cache,
+): Promise<number> {
+  const key = `boundary:${date}`;
+  const cached = cache.get<number>(key, TTL.day);
+  if (cached !== undefined) return cached;
+
+  // Seed the low end from the estimated id for `date` instead of the full
+  // MAX_BACK_DAYS span: ids advance at most RATE_MAX/day, so the true
+  // boundary cannot sit below anchor.id - age*RATE_MAX - IDS_PER_DAY.
+  // That shrinks the search (and its sequential API probes) dramatically
+  // for recent dates — the common infinite-scroll case.
+  const age = daysBetween(date, anchor.date);
+  let lo = Math.max(
+    anchor.id - MAX_BACK_DAYS * RATE_MAX,
+    anchor.id - age * RATE_MAX - IDS_PER_DAY,
+  );
+  let hi = anchor.id;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const info = await probeNear(api, mid);
+    if (!info) {
+      lo = mid + 1; // gap wider than WALK (rare) — step past it
+      continue;
+    }
+    if ((info.details?.date ?? '') < date) lo = mid + 1;
+    else hi = mid;
+  }
+  cache.set(key, lo);
+  return lo;
+}
+
+/** Fast path: dates inside the 7-day schedule window need no id-space scan. */
+async function fetchDayFastPath(
+  schedule: ScheduleService,
+  date: string,
+  channel: ChannelSlug,
+): Promise<DayItem[] | null> {
+  const sched = await schedule.fetchSchedule(channel);
+  const fast = sched.items
+    .filter((it) => it.date === date)
+    .map(
+      (it) =>
+        ({
+          epg_id: it.epg_id,
+          title: it.title,
+          start: it.start,
+          end: it.end,
+          channel,
+          date,
+          url: it.url,
+          playable: true,
+        }) satisfies DayItem,
+    );
+  fast.sort((a, b) => a.start.localeCompare(b.start) || a.epg_id - b.epg_id);
+  return fast;
+}
+
+/** Scan path: locate the date's id boundary, resolve the ids around it. */
+async function fetchDayScan(
+  config: Config,
+  cache: Cache,
+  api: ApiClient,
+  anchor: { id: number; date: string },
+  date: string,
+  channel: ChannelSlug | undefined,
+  ageDays: number,
+): Promise<DayItem[]> {
+  const boundary = await locateBoundary(anchor, date, api, cache);
+  const ids: number[] = [];
+  for (let id = boundary - SCAN_BEFORE; id <= boundary + SCAN_AFTER; id++) ids.push(id);
+
+  const resolved = await mapLimit(ids, 16, async (id) => {
+    try {
+      return await api.resolveEpg(String(id));
+    } catch {
+      return null;
+    }
+  });
+
+  const candidates = resolved.filter(
+    (r): r is ResolvedEpg =>
+      !!r && r.details?.date === date && (!channel || r.details.channel === channel),
+  );
+
+  // Days well inside the CDN retention window are trusted once the id
+  // resolves (probing the CDN per item is what makes first-browse pages
+  // slow).  Only days near the retention edge are still CDN-verified.
+  const verifyCdn = ageDays > RECENT_DAYS;
+  const items = await mapLimit(candidates, 8, async (r) => {
+    const d = r.details!;
+    return {
+      epg_id: d.id,
+      title: d.title,
+      start: d.start,
+      end: d.end,
+      channel: d.channel,
+      date: d.date,
+      url: `/replay/${d.id}.m3u8`,
+      playable: verifyCdn ? await verifyMaster(config, r.url) : true,
+    } satisfies DayItem;
+  });
+
+  items.sort(
+    (a, b) =>
+      a.start.localeCompare(b.start) || a.epg_id - b.epg_id,
+  );
+  return items;
+}
+
+async function fetchDayImpl(
+  config: Config,
+  cache: Cache,
+  api: ApiClient,
+  schedule: ScheduleService,
+  date: string,
+  channel?: ChannelSlug,
+): Promise<DayResult> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new HttpError('invalid date, use YYYY-MM-DD', 400);
+  }
+  const key = `day:${date}:${channel ?? 'all'}`;
+  const cached = cache.get<DayResult>(key, TTL.day);
+  if (cached) return cached;
+
+  const anchor = await getAnchor(config, cache, schedule);
+  if (date > anchor.date) throw new HttpError(`date ${date} is in the future`, 400);
+  const ageDays = daysBetween(date, anchor.date); // positive for past dates
+  if (ageDays > MAX_BACK_DAYS) {
+    const empty: DayResult = { date, channel, generated_at: new Date().toISOString(), items: [] };
+    cache.set(key, empty);
+    return empty;
+  }
+
+  // Fast path: dates inside the 7-day schedule window are already listed by
+  // the schedule scrape (per channel) and sit well inside CDN retention, so
+  // no id-space scan and no per-item CDN probe.
+  const fast = channel && ageDays <= 6 ? await fetchDayFastPath(schedule, date, channel) : null;
+  const items = fast ?? (await fetchDayScan(config, cache, api, anchor, date, channel, ageDays));
+
+  const result: DayResult = { date, channel, generated_at: new Date().toISOString(), items };
+  cache.set(key, result);
+  return result;
+}
+
+async function fetchPrevImpl(
+  config: Config,
+  cache: Cache,
+  api: ApiClient,
+  schedule: ScheduleService,
+  before: string,
+  channel?: ChannelSlug,
+): Promise<PrevResult> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(before)) {
+    throw new HttpError('invalid date, use YYYY-MM-DD', 400);
+  }
+  const [anchor, range] = await Promise.all([getAnchor(config, cache, schedule), fetchRangeImpl(config, cache, api, schedule)]);
+  if (before > anchor.date) {
+    throw new HttpError(`date ${before} is after the newest program`, 400);
+  }
+  const { earliest } = range;
+
+  let date = addDays(before, -1);
+  while (date >= earliest) {
+    const day = await fetchDayImpl(config, cache, api, schedule, date, channel);
+    if (day.items.some((it) => it.playable)) {
+      return { date, earliest, items: day.items, end: false };
+    }
+    date = addDays(date, -1);
+  }
+  return { date: null, earliest, items: [], end: true };
+}
+
+/** True when any program at `daysAgo` still plays on the CDN. */
+async function isPlayableAt(
+  config: Config,
+  cache: Cache,
+  api: ApiClient,
+  schedule: ScheduleService,
+  anchor: { id: number; date: string },
+  daysAgo: number,
+): Promise<boolean> {
+  // Probe three slots around the middle of the estimated day block: the
+  // id→date mapping floors to the block *end*, so offsets symmetric around
+  // the middle stay inside the target day and never leak into the newer
+  // block.  Probing several slots keeps a single dead slot (ads, pruned
+  // programs) from flipping the bisection to "gone".
+  const mid = anchor.id - daysAgo * IDS_PER_DAY - Math.floor(IDS_PER_DAY / 2);
+  for (const off of [-35, 0, 35]) {
+    const info = await probeNear(api, mid + off);
+    if (info && (await verifyMaster(config, info.url))) return true;
+  }
+  return false;
+}
+
+async function fetchRangeImpl(
+  config: Config,
+  cache: Cache,
+  api: ApiClient,
+  schedule: ScheduleService,
+): Promise<HistoryRange> {
+  const cached = cache.get<HistoryRange>('history:range', TTL.range);
+  if (cached) return cached;
+
+  const anchor = await getAnchor(config, cache, schedule);
+
+  // Binary-search the largest daysAgo with playable content (CDN retention).
+  let lo = 1;
+  let hi = MAX_BACK_DAYS;
+  let lastPlayable = 1;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (await isPlayableAt(config, cache, api, schedule, anchor, mid)) {
+      lastPlayable = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  const earliest = addDays(anchor.date, -lastPlayable);
+  const result: HistoryRange = {
+    earliest,
+    latest: anchor.date,
+    days: daysBetween(earliest, anchor.date) + 1,
+  };
+  cache.set('history:range', result);
+  return result;
+}
+
 export function createHistoryService({
   config,
   cache,
@@ -151,263 +461,9 @@ export function createHistoryService({
   api: ApiClient;
   schedule: ScheduleService;
 }): HistoryService {
-  /** Newest known (id, date) pair: from the schedule scrape, else extrapolated. */
-  async function getAnchor(): Promise<{ id: number; date: string }> {
-    const cached = cache.get<{ id: number; date: string }>('history:anchor', TTL.anchor);
-    if (cached) return cached;
-
-    try {
-      const sched = await schedule.fetchSchedule('rcti');
-      let maxId = -1;
-      let maxDate = '';
-      for (const it of sched.items) {
-        if (it.epg_id > maxId) {
-          maxId = it.epg_id;
-          maxDate = it.date;
-        }
-      }
-      if (maxId > 0 && maxDate) {
-        const anchor = { id: maxId, date: maxDate };
-        cache.set('history:anchor', anchor);
-        return anchor;
-      }
-    } catch {
-      /* schedule unreachable — fall through to the baked reference */
-    }
-
-    // Last resort: extrapolate the baked reference by elapsed days.
-    const days = Math.max(0, daysBetween(config.historyRef.date, todayLocal()));
-    return {
-      id: config.historyRef.id + days * IDS_PER_DAY,
-      date: todayLocal(),
-    };
-  }
-
-  /** Resolve an id, walking across dead gaps to the nearest live program. */
-  async function probeNear(id: number): Promise<ResolvedEpg | null> {
-    for (const off of WALK) {
-      const cand = id + off;
-      if (cand < 0) continue;
-      try {
-        const r = await api.resolveEpg(String(cand));
-        if (r.details) return r;
-      } catch {
-        /* non-catchup slot (ads, pruned program) — keep walking */
-      }
-    }
-    return null;
-  }
-
-  /** Verify the CDN still serves a master playlist for a VOD url. */
-  async function verifyMaster(url: string): Promise<boolean> {
-    try {
-      const res = await fetch(url, {
-        headers: {
-          Referer: config.referer,
-          Origin: config.origin,
-          'User-Agent': config.userAgent,
-          Accept: '*/*',
-        },
-        redirect: 'follow',
-        signal: AbortSignal.timeout(config.timeouts.cdn),
-      });
-      if (!res.ok) return false;
-      return (await res.text()).startsWith('#EXTM3U');
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Binary-search the id range for the first live id whose program date is on
-   * or after the target date.  Live ids advance monotonically with time (the
-   * sparse archive region still orders correctly), so this pins the target
-   * date's slot window cheaply and is immune to id-rate drift.
-   */
-  async function locateBoundary(
-    anchor: { id: number; date: string },
-    date: string,
-  ): Promise<number> {
-    const key = `boundary:${date}`;
-    const cached = cache.get<number>(key, TTL.day);
-    if (cached !== undefined) return cached;
-
-    // Seed the low end from the estimated id for `date` instead of the full
-    // MAX_BACK_DAYS span: ids advance at most RATE_MAX/day, so the true
-    // boundary cannot sit below anchor.id - age*RATE_MAX - IDS_PER_DAY.
-    // That shrinks the search (and its sequential API probes) dramatically
-    // for recent dates — the common infinite-scroll case.
-    const age = daysBetween(date, anchor.date);
-    let lo = Math.max(
-      anchor.id - MAX_BACK_DAYS * RATE_MAX,
-      anchor.id - age * RATE_MAX - IDS_PER_DAY,
-    );
-    let hi = anchor.id;
-    while (lo < hi) {
-      const mid = Math.floor((lo + hi) / 2);
-      const info = await probeNear(mid);
-      if (!info) {
-        lo = mid + 1; // gap wider than WALK (rare) — step past it
-        continue;
-      }
-      if ((info.details?.date ?? '') < date) lo = mid + 1;
-      else hi = mid;
-    }
-    cache.set(key, lo);
-    return lo;
-  }
-
-  async function fetchDay(date: string, channel?: ChannelSlug): Promise<DayResult> {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      throw new HttpError('invalid date, use YYYY-MM-DD', 400);
-    }
-    const key = `day:${date}:${channel ?? 'all'}`;
-    const cached = cache.get<DayResult>(key, TTL.day);
-    if (cached) return cached;
-
-    const anchor = await getAnchor();
-    if (date > anchor.date) throw new HttpError(`date ${date} is in the future`, 400);
-    const ageDays = daysBetween(date, anchor.date); // positive for past dates
-    if (ageDays > MAX_BACK_DAYS) {
-      const empty: DayResult = { date, channel, generated_at: new Date().toISOString(), items: [] };
-      cache.set(key, empty);
-      return empty;
-    }
-
-    // Fast path: dates inside the 7-day schedule window need no id-space scan
-    // (the schedule scrape already lists them, per channel), and they are
-    // well inside CDN retention, so no per-item CDN probe either.
-    if (channel && ageDays <= 6) {
-      const sched = await schedule.fetchSchedule(channel);
-      const fast = sched.items
-        .filter((it) => it.date === date)
-        .map(
-          (it) =>
-            ({
-              epg_id: it.epg_id,
-              title: it.title,
-              start: it.start,
-              end: it.end,
-              channel,
-              date,
-              url: it.url,
-              playable: true,
-            }) satisfies DayItem,
-        );
-      fast.sort((a, b) => a.start.localeCompare(b.start) || a.epg_id - b.epg_id);
-      const fastResult: DayResult = { date, channel, generated_at: new Date().toISOString(), items: fast };
-      cache.set(key, fastResult);
-      return fastResult;
-    }
-
-    const boundary = await locateBoundary(anchor, date);
-    const ids: number[] = [];
-    for (let id = boundary - SCAN_BEFORE; id <= boundary + SCAN_AFTER; id++) ids.push(id);
-
-    const resolved = await mapLimit(ids, 16, async (id) => {
-      try {
-        return await api.resolveEpg(String(id));
-      } catch {
-        return null;
-      }
-    });
-
-    const candidates = resolved.filter(
-      (r): r is ResolvedEpg =>
-        !!r && r.details?.date === date && (!channel || r.details.channel === channel),
-    );
-
-    // Days well inside the CDN retention window are trusted once the id
-    // resolves (probing the CDN per item is what makes first-browse pages
-    // slow).  Only days near the retention edge are still CDN-verified.
-    const verifyCdn = ageDays > RECENT_DAYS;
-    const items = await mapLimit(candidates, 8, async (r) => {
-      const d = r.details!;
-      return {
-        epg_id: d.id,
-        title: d.title,
-        start: d.start,
-        end: d.end,
-        channel: d.channel,
-        date: d.date,
-        url: `/replay/${d.id}.m3u8`,
-        playable: verifyCdn ? await verifyMaster(r.url) : true,
-      } satisfies DayItem;
-    });
-
-    items.sort(
-      (a, b) =>
-        a.start.localeCompare(b.start) || a.epg_id - b.epg_id,
-    );
-    const result: DayResult = { date, channel, generated_at: new Date().toISOString(), items };
-    cache.set(key, result);
-    return result;
-  }
-
-  async function fetchPrev(before: string, channel?: ChannelSlug): Promise<PrevResult> {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(before)) {
-      throw new HttpError('invalid date, use YYYY-MM-DD', 400);
-    }
-    const [anchor, range] = await Promise.all([getAnchor(), fetchRange()]);
-    if (before > anchor.date) {
-      throw new HttpError(`date ${before} is after the newest program`, 400);
-    }
-    const { earliest } = range;
-
-    let date = addDays(before, -1);
-    while (date >= earliest) {
-      const day = await fetchDay(date, channel);
-      if (day.items.some((it) => it.playable)) {
-        return { date, earliest, items: day.items, end: false };
-      }
-      date = addDays(date, -1);
-    }
-    return { date: null, earliest, items: [], end: true };
-  }
-
-  async function fetchRange(): Promise<HistoryRange> {
-    const cached = cache.get<HistoryRange>('history:range', TTL.range);
-    if (cached) return cached;
-
-    const anchor = await getAnchor();
-    /** True when any program at `daysAgo` still plays on the CDN. */
-    const isPlayable = async (daysAgo: number): Promise<boolean> => {
-      // Probe three slots around the middle of the estimated day block: the
-      // id→date mapping floors to the block *end*, so offsets symmetric around
-      // the middle stay inside the target day and never leak into the newer
-      // block.  Probing several slots keeps a single dead slot (ads, pruned
-      // programs) from flipping the bisection to "gone".
-      const mid = anchor.id - daysAgo * IDS_PER_DAY - Math.floor(IDS_PER_DAY / 2);
-      for (const off of [-35, 0, 35]) {
-        const info = await probeNear(mid + off);
-        if (info && (await verifyMaster(info.url))) return true;
-      }
-      return false;
-    };
-
-    // Binary-search the largest daysAgo with playable content (CDN retention).
-    let lo = 1;
-    let hi = MAX_BACK_DAYS;
-    let lastPlayable = 1;
-    while (lo <= hi) {
-      const mid = Math.floor((lo + hi) / 2);
-      if (await isPlayable(mid)) {
-        lastPlayable = mid;
-        lo = mid + 1;
-      } else {
-        hi = mid - 1;
-      }
-    }
-
-    const earliest = addDays(anchor.date, -lastPlayable);
-    const result: HistoryRange = {
-      earliest,
-      latest: anchor.date,
-      days: daysBetween(earliest, anchor.date) + 1,
-    };
-    cache.set('history:range', result);
-    return result;
-  }
-
-  return { fetchDay, fetchRange, fetchPrev };
+  return {
+    fetchDay: (date, channel) => fetchDayImpl(config, cache, api, schedule, date, channel),
+    fetchRange: () => fetchRangeImpl(config, cache, api, schedule),
+    fetchPrev: (before, channel) => fetchPrevImpl(config, cache, api, schedule, before, channel),
+  };
 }

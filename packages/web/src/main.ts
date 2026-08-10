@@ -181,10 +181,14 @@ function setSide(open: boolean): void {
 menuBtn.addEventListener('click', () => setSide(!sideOpen));
 // Clicking the dimmed overlay behind the open panel closes it.
 backdrop.addEventListener('click', () => setSide(false));
+/** True when the event target is the side panel or its toggle button. */
+function insidePanel(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  return !!el && (el.closest('#side') !== null || el.closest('#menu-btn') !== null);
+}
 document.addEventListener('click', (e) => {
   if (!sideOpen) return;
-  const t = e.target as HTMLElement | null;
-  if (t && (t.closest('#side') || t.closest('#menu-btn'))) return;
+  if (insidePanel(e.target)) return;
   setSide(false);
 });
 
@@ -196,28 +200,48 @@ function focusables(): HTMLElement[] {
     (el) => el.matches('#menuBtn') || (sideOpen && !!el.closest('#side')),
   );
 }
+/** Direction pass: candidate must sit strictly on the `dir` side (±4px slack). */
+const DIR_TEST: Record<string, (dx: number, dy: number) => boolean> = {
+  left: (dx) => dx < -4,
+  right: (dx) => dx > 4,
+  up: (_dx, dy) => dy < -4,
+  down: (_dx, dy) => dy > 4,
+};
+
+/** Squared distance from the focus center, or null when el is not in `dir`. */
+function candidateDistance(
+  c: { x: number; y: number },
+  el: HTMLElement,
+  dir: string,
+): number | null {
+  const b = el.getBoundingClientRect();
+  const dx = b.left + b.width / 2 - c.x;
+  const dy = b.top + b.height / 2 - c.y;
+  const test = DIR_TEST[dir];
+  if (!test || !test(dx, dy)) return null;
+  return dx * dx + dy * dy;
+}
+
+/** The focused element when it is focusable, else the first focusable. */
+function currentFocusable(els: HTMLElement[]): HTMLElement {
+  const cur = document.activeElement as HTMLElement | null;
+  if (cur && els.includes(cur)) return cur;
+  return els[0]!;
+}
+
 function moveFocus(dir: 'up' | 'down' | 'left' | 'right'): boolean {
   const els = focusables();
   if (!els.length) return false;
-  const cur = document.activeElement as HTMLElement | null;
-  const current = cur && els.includes(cur) ? cur : els[0]!;
+  const current = currentFocusable(els);
   current.focus();
-  const c = current.getBoundingClientRect();
-  const cx = c.left + c.width / 2;
-  const cy = c.top + c.height / 2;
+  const rect = current.getBoundingClientRect();
+  const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
   let best: HTMLElement | null = null;
   let bestDist = Infinity;
   for (const el of els) {
     if (el === current) continue;
-    const b = el.getBoundingClientRect();
-    const dx = b.left + b.width / 2 - cx;
-    const dy = b.top + b.height / 2 - cy;
-    if (dir === 'left' && dx >= -4) continue;
-    if (dir === 'right' && dx <= 4) continue;
-    if (dir === 'up' && dy >= -4) continue;
-    if (dir === 'down' && dy <= 4) continue;
-    const dist = dx * dx + dy * dy;
-    if (dist < bestDist) {
+    const dist = candidateDistance(center, el, dir);
+    if (dist !== null && dist < bestDist) {
       bestDist = dist;
       best = el;
     }
@@ -242,41 +266,45 @@ function scrollableOf(el: HTMLElement): HTMLElement | null {
   }
   return null;
 }
-window.addEventListener(
-  'keydown',
-  (e) => {
-    wake();
-    const t = e.target as HTMLElement | null;
-    if (
-      t &&
-      (t.tagName === 'SELECT' || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')
-    ) {
-      return;
-    }
-    if (e.key === 'ArrowLeft') {
-      if (!moveFocus('left')) e.preventDefault();
-    } else if (e.key === 'ArrowRight') {
-      if (!moveFocus('right')) e.preventDefault();
-    } else if (e.key === 'ArrowUp') {
-      if (!moveFocus('up')) {
-        const s = scrollableOf(document.activeElement as HTMLElement);
-        if (s) scroll(s, 'up');
-        e.preventDefault();
-      }
-    } else if (e.key === 'ArrowDown') {
-      if (!moveFocus('down')) {
-        const s = scrollableOf(document.activeElement as HTMLElement);
-        if (s) scroll(s, 'down');
-        e.preventDefault();
-      }
-    } else if (e.key === 'Escape' || e.key === 'Backspace') {
-      // Android TV back button closes the panel first.
-      if (sideOpen) setSide(false);
-      e.preventDefault();
-    }
-  },
-  true,
-);
+/** Arrow key → moveFocus direction. */
+const ARROW_DIR: Record<string, 'up' | 'down' | 'left' | 'right'> = {
+  ArrowLeft: 'left',
+  ArrowRight: 'right',
+  ArrowUp: 'up',
+  ArrowDown: 'down',
+};
+/** True when the key event targets a native text input. */
+const FORM_TAGS = new Set(['SELECT', 'INPUT', 'TEXTAREA']);
+function isFormField(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  return el !== null && FORM_TAGS.has(el.tagName);
+}
+
+/** Directional navigation: nearest focusable, else page the scrollable. */
+function arrowKey(dir: 'up' | 'down' | 'left' | 'right', e: KeyboardEvent): void {
+  if (moveFocus(dir)) return;
+  if (dir === 'up' || dir === 'down') {
+    const container = scrollableOf(document.activeElement as HTMLElement);
+    if (container) scroll(container, dir);
+  }
+  e.preventDefault();
+}
+
+function onKeyDown(e: KeyboardEvent): void {
+  wake();
+  if (isFormField(e.target)) return;
+  const dir = ARROW_DIR[e.key];
+  if (dir !== undefined) {
+    arrowKey(dir, e);
+    return;
+  }
+  if (e.key === 'Escape' || e.key === 'Backspace') {
+    // Android TV back button closes the panel first.
+    if (sideOpen) setSide(false);
+    e.preventDefault();
+  }
+}
+window.addEventListener('keydown', onKeyDown, true);
 
 /* ---------------------------------------------------------- rendering */
 function channelRow(ch: string, index: number): HTMLButtonElement {
@@ -415,6 +443,42 @@ function addSentinel(): void {
   replayObserver.observe(s);
 }
 
+/** Append the fetched page and advance the feed cursor. */
+function appendPage(
+  res: { date: string | null; items: ScheduleItem[]; end: boolean },
+): void {
+  if (res.date && res.items.length) {
+    appendDateSection(res.date, res.items);
+    replayOldest = res.date;
+  }
+  replayDone = res.end;
+}
+
+/** Archive reached — freeze the sentinel. */
+function finishFeed(sentinel: HTMLElement | null): void {
+  if (!sentinel) return;
+  sentinel.textContent = 'Akhir arsip.';
+  replayObserver?.disconnect();
+  replayObserver = null;
+}
+
+/** A failed page should not kill the feed: mark done and surface the error. */
+function failFeed(sentinel: HTMLElement | null, err: unknown): void {
+  replayDone = true;
+  if (sentinel) sentinel.textContent = `Gagal memuat: ${(err as Error).message}`;
+}
+
+/** If the sentinel is still visible (e.g. a tall panel), keep loading. */
+function maybeContinueFeed(): void {
+  if (replayDone || !replayObserver) return;
+  const sentinel = document.getElementById('replay-sentinel');
+  if (!sentinel) return;
+  const root = replayList.closest('.overflow-y-auto') as HTMLElement;
+  if (sentinel.getBoundingClientRect().top < root.getBoundingClientRect().bottom) {
+    loadMoreReplay();
+  }
+}
+
 /** Fetch and append the next older day once there are playable days left. */
 async function loadMoreReplay(): Promise<void> {
   if (replayBusy || replayDone || !replayOldest) return;
@@ -422,33 +486,18 @@ async function loadMoreReplay(): Promise<void> {
   const sentinel = document.getElementById('replay-sentinel');
   try {
     const res = await api.historyPrev(replayOldest, replayChannel);
-    if (res.date && res.items.length) {
-      appendDateSection(res.date, res.items);
-      replayOldest = res.date;
-    }
-    replayDone = res.end;
-    if (res.end && sentinel) {
-      sentinel.textContent = 'Akhir arsip.';
-      replayObserver?.disconnect();
-      replayObserver = null;
-    }
+    appendPage(res);
+    if (res.end) finishFeed(sentinel);
   } catch (err) {
-    // A failed page should not kill the feed: mark done and surface the error.
-    replayDone = true;
-    if (sentinel) sentinel.textContent = `Gagal memuat: ${(err as Error).message}`;
+    failFeed(sentinel, err);
   } finally {
     replayBusy = false;
-    // If the sentinel is still visible (e.g. the panel is tall), keep going.
-    if (!replayDone && replayObserver && sentinel) {
-      const r = sentinel.getBoundingClientRect();
-      const root = replayList.closest('.overflow-y-auto') as HTMLElement;
-      if (r.top < root.getBoundingClientRect().bottom) loadMoreReplay();
-    }
+    maybeContinueFeed();
   }
 }
 
-async function loadReplay(channel: string): Promise<void> {
-  replayChannel = channel;
+/** Clear the feed state and the sentinel for a fresh channel. */
+function resetFeed(): void {
   replayFeed.clear();
   replayOldest = '';
   replayDone = false;
@@ -456,29 +505,42 @@ async function loadReplay(channel: string): Promise<void> {
   replayObserver?.disconnect();
   replayObserver = null;
   replayList.innerHTML = '';
-  const label = document.createElement('div');
-  label.className = 'px-4 py-2 text-xs text-white/40';
-  label.textContent = `Memuat replay ${channel.toUpperCase()}…`;
-  replayList.appendChild(label);
+}
+
+/** One-off status row shown while the first schedule page loads. */
+function feedStatusRow(text: string, error = false): void {
+  const e = document.createElement('div');
+  e.className = `px-4 py-2 text-xs ${error ? 'text-red-400' : 'text-white/40'}`;
+  e.textContent = text;
+  replayList.appendChild(e);
+}
+
+/** Group schedule items by date, newest date keys first. */
+function groupByDate(items: ScheduleItem[]): Map<string, ScheduleItem[]> {
+  const byDate = new Map<string, ScheduleItem[]>();
+  for (const it of items) {
+    const list = byDate.get(it.date) ?? [];
+    list.push(it);
+    byDate.set(it.date, list);
+  }
+  return byDate;
+}
+
+async function loadReplay(channel: string): Promise<void> {
+  replayChannel = channel;
+  resetFeed();
+  feedStatusRow(`Memuat replay ${channel.toUpperCase()}…`);
 
   try {
     const data = await api.schedule(channel);
     replayList.innerHTML = '';
     const items = data.items ?? [];
     if (!items.length) {
-      const empty = document.createElement('div');
-      empty.className = 'px-4 py-2 text-xs text-white/40';
-      empty.textContent = 'Tidak ada catch-up.';
-      replayList.appendChild(empty);
+      feedStatusRow('Tidak ada catch-up.');
       replayDone = true;
       return;
     }
-    const byDate = new Map<string, typeof items>();
-    for (const it of items) {
-      const list = byDate.get(it.date) ?? [];
-      list.push(it);
-      byDate.set(it.date, list);
-    }
+    const byDate = groupByDate(items);
     [...byDate.keys()]
       .sort()
       .reverse()
@@ -488,10 +550,7 @@ async function loadReplay(channel: string): Promise<void> {
     replayOldest = [...byDate.keys()].sort()[0]!;
     addSentinel();
   } catch (err) {
-    const e = document.createElement('div');
-    e.className = 'px-4 py-2 text-xs text-red-400';
-    e.textContent = `Gagal memuat replay: ${(err as Error).message}`;
-    replayList.appendChild(e);
+    feedStatusRow(`Gagal memuat replay: ${(err as Error).message}`, true);
     replayDone = true;
   }
 }
@@ -543,34 +602,32 @@ function titleSim(a: string, b: string): number {
   return (2 * prev[n]) / (m + n);
 }
 
+/** Same program on `nextDate`: title similarity with the exact time slot as
+    the dominant signal (slot match always beats a same-slotness tie). */
+function findNextEpisode(cur: ScheduleItem, nextDate: string): ScheduleItem | null {
+  let best: ScheduleItem | null = null;
+  let bestScore = 0;
+  for (const it of replayFeed.values()) {
+    if (it.date !== nextDate) continue;
+    const sim = titleSim(cur.title, it.title);
+    if (sim < 0.6) continue;
+    const score = sim + (it.start === cur.start ? 1000 : 0);
+    if (score > bestScore) {
+      bestScore = score;
+      best = it;
+    }
+  }
+  return best;
+}
+
 function onReplayEnded(): void {
   if (activeEpgId === null) return;
   const cur = replayFeed.get(activeEpgId);
   if (!cur) return;
   const nextDate = addDays(cur.date, 1);
   if (!nextDate) return;
+  const best = findNextEpisode(cur, nextDate);
 
-  // Find the same program on the next day. Titles aren't always identical
-  // across days (episode suffixes, minor wording), so allow an approximate
-  // match; the exact time slot is the strongest signal.
-  let best: ScheduleItem | null = null;
-  let bestSim = 0;
-  let bestSlot = false;
-  for (const it of replayFeed.values()) {
-    if (it.date !== nextDate) continue;
-    const sim = titleSim(cur.title, it.title);
-    if (sim < 0.6) continue;
-    const slot = it.start === cur.start;
-    if (
-      best === null ||
-      (slot && !bestSlot) ||
-      (slot === bestSlot && sim > bestSim)
-    ) {
-      best = it;
-      bestSim = sim;
-      bestSlot = slot;
-    }
-  }
   if (!best) {
     // No similar episode tomorrow — fall back to the live feed so the
     // playback never just stops mid-marathon.

@@ -8,7 +8,7 @@
  */
 
 /** Channel slug -> RCTI+ API channel id (used by `live/{id}/url`). */
-export const CHANNELS = {
+const CHANNELS = {
   rcti: 1,
   mnctv: 2,
   gtv: 3,

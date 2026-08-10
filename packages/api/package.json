@@ -11,7 +11,8 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "deploy": "wrangler deploy --config ../../wrangler.toml"
+    "deploy": "wrangler deploy --config ../../wrangler.toml",
+    "coverage": "vitest run --coverage"
   },
   "engines": {
     "node": ">=20.6"
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "typescript": "^5.7.0",
     "vitest": "^4.1.10"
   }

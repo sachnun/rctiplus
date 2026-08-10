@@ -30,16 +30,7 @@ import { serve } from '@hono/node-server';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { serveStatic } from '@hono/node-server/serve-static';
-import { Hono } from 'hono';
-
-import { CONFIG } from './config.js';
-import { createCache } from './cache.js';
-import { createTokenManager } from './token.js';
-import { createApiClient } from './rctiplus.js';
-import { createCdnProxy } from './hls.js';
-import { createScheduleService } from './schedule.js';
-import { createHistoryService } from './history.js';
-import { registerRoutes } from './routes.js';
+import { createApiApp } from './app.js';
 
 const port = Number(process.env.PORT || 3000);
 
@@ -47,15 +38,7 @@ const port = Number(process.env.PORT || 3000);
 const WEB_DIST = fileURLToPath(new URL('../../../packages/web/dist', import.meta.url));
 
 /* ------------------------------------------- wire up the service graph */
-const cache = createCache();
-const tokenManager = createTokenManager({ config: CONFIG });
-const api = createApiClient({ config: CONFIG, cache, tokenManager });
-const cdn = createCdnProxy({ config: CONFIG, api, cache });
-const schedule = createScheduleService({ config: CONFIG, cache });
-const history = createHistoryService({ config: CONFIG, cache, api, schedule });
-
-const app = new Hono<{ Bindings: Record<string, unknown> }>();
-registerRoutes(app, { config: CONFIG, api, cdn, schedule, history });
+const app = createApiApp<Record<string, unknown>>();
 
 // Built frontend catch-all, registered last so the API routes above always
 // win; skipped entirely when dist is absent (Vite dev server takes over).

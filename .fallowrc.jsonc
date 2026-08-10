@@ -1,0 +1,21 @@
+{
+  // Fallow configuration for rctiplus (see `fallow config-schema`).
+  // - worker.ts is a real runtime entry (wrangler.toml `main`), not dead code.
+  // - API CRAP uses real vitest v8 coverage; test files are excluded from the
+  //   health score (long describe/it blocks by nature).
+  // - The web player has no unit-test coverage yet, so CRAP is estimated at
+  //   0% there; the per-file ceiling still fails any function with >=8
+  //   branches (CRAP >= 72), a real regression bar.
+  "entry": ["packages/api/src/worker.ts"],
+  "health": {
+    "coverage": "packages/api/coverage/coverage-final.json",
+    "ignore": ["packages/api/tests/**"],
+    "thresholdOverrides": [
+      {
+        "files": ["packages/web/src/main.ts", "packages/web/src/player.ts"],
+        "maxCrap": 60.0,
+        "reason": "Web UI has no unit-test coverage yet (CRAP estimated at 0%); ceiling still flags any function with >=8 branches (CRAP>=72) while allowing the stateful UI logic (<=7 branches) that ships today."
+      }
+    ]
+  }
+}

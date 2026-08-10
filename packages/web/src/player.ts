@@ -3,7 +3,7 @@
  * some browsers spin in a tight loop against live manifests. The proxy's
  * playlists/segments are relative and same-origin, so no CORS work is needed.
  */
-import Hls from 'hls.js';
+import Hls, { type ErrorData } from 'hls.js';
 
 export type PlaybackStatus = 'playing' | 'buffering' | 'error' | 'idle';
 
@@ -13,6 +13,20 @@ export interface PlayerEvents {
   /** The current program reached its end (VOD replay finished). */
   ended(): void;
 }
+
+/** Manifest-level load failures: the master itself is dead/expired. */
+const MANIFEST_ERRORS = new Set([
+  Hls.ErrorDetails.MANIFEST_LOAD_ERROR,
+  Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT,
+]);
+
+/** Fragment/level load failures: the stream is struggling to start. */
+const FRAGMENT_ERRORS = new Set([
+  Hls.ErrorDetails.FRAG_LOAD_ERROR,
+  Hls.ErrorDetails.FRAG_LOAD_TIMEOUT,
+  Hls.ErrorDetails.LEVEL_LOAD_ERROR,
+  Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT,
+]);
 
 export class Player {
   private hls: Hls | null = null;
@@ -60,10 +74,6 @@ export class Player {
     });
   }
 
-  get label(): string {
-    return this.currentLabel;
-  }
-
   /** Retry once at 'auto' when the HD manifest cannot be loaded. */
   private fallbackToAuto(): void {
     if (this.quality === 'auto') return;
@@ -79,24 +89,33 @@ export class Player {
     this.playing = false;
     this.events.nowPlaying(label);
 
-    const url = this.quality !== 'auto' ? `${path}?quality=${this.quality}` : path;
     if (!Hls.isSupported()) {
       this.events.status('error', 'hls.js tidak tersedia di browser ini.');
       return;
     }
 
-    // Fragments on the catch-up CDN (past-event.rctiplus.id) can be slow to
-    // first byte on weaker links, especially the opening segment of a replay.
-    // Use generous, explicit load timeouts and many internal retries so a slow
-    // (not dead) stream is given time to start instead of aborting early.
-    const hls = new Hls({
+    const url = this.quality !== 'auto' ? `${path}?quality=${this.quality}` : path;
+    const hls = this.buildHls();
+    this.hls = hls;
+    this.fatalCount = 0;
+    hls.loadSource(url);
+    hls.attachMedia(this.video);
+    this.attachLifecycleHandlers(hls);
+  }
+
+  /**
+   * hls.js with generous, explicit load timeouts and many internal retries:
+   * fragments on the catch-up CDN (past-event.rctiplus.id) can be slow to
+   * first byte on weaker links, especially the opening segment of a replay.
+   * A slow (not dead) stream is given time to start instead of aborting early.
+   */
+  private buildHls(): Hls {
+    return new Hls({
       liveSyncDurationCount: 3,
       maxBufferLength: 30,
       maxMaxBufferLength: 60,
       backBufferLength: 90,
       startFragPrefetch: true,
-      // Slow-first-byte tolerance (catch-up CDN can be slow on the first
-      // segment, especially at the very start of a replay).
       manifestLoadPolicy: {
         default: {
           maxTimeToFirstByteMs: 30000,
@@ -114,10 +133,9 @@ export class Player {
         },
       },
     });
-    this.hls = hls;
-    this.fatalCount = 0;
-    hls.loadSource(url);
-    hls.attachMedia(this.video);
+  }
+
+  private attachLifecycleHandlers(hls: Hls): void {
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
       this.events.status('buffering', 'Memuat…');
       const p = this.video.play();
@@ -125,44 +143,17 @@ export class Player {
         p.catch(() => this.events.status('idle', 'Autoplay diblokir — tekan play.'));
       }
     });
+    this.attachErrorHandler(hls);
+  }
+
+  /** Fatal hls.js error handling: recover in place, else surface once. */
+  private attachErrorHandler(hls: Hls): void {
     hls.on(Hls.Events.ERROR, (_e, data) => {
       if (!data || !data.fatal) return;
       this.fatalCount += 1;
 
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-        const manifestError =
-          data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
-          data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT;
-        if (manifestError) {
-          // Dead/expired master (live or expired catch-up token): point at a
-          // fresh resolution before calling it a day.
-          this.events.status('buffering', 'Menunggu program berikutnya…');
-          this.fallbackToAuto();
-          return;
-        }
-
-        const fragmentError =
-          data.details === Hls.ErrorDetails.FRAG_LOAD_ERROR ||
-          data.details === Hls.ErrorDetails.FRAG_LOAD_TIMEOUT ||
-          data.details === Hls.ErrorDetails.LEVEL_LOAD_ERROR ||
-          data.details === Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT;
-
-        // Give a struggling stream a couple of in-place recoveries first.
-        if (fragmentError && this.fatalCount < 3) {
-          this.events.status('buffering', 'Menunggu segmen berikutnya…');
-          hls.startLoad();
-          return;
-        }
-
-        // Nothing buffered and fragments still won't load: drop to 'auto'
-        // (ABR, starts at the lowest variant) instead of retrying seg-1 from
-        // the top forever. A lower-bandwidth rendition usually starts where
-        // the pinned 720p would not.
-        if (this.quality !== 'auto') {
-          this.events.status('buffering', 'Mencoba kualitas lebih rendah…');
-          this.fallbackToAuto();
-          return;
-        }
+        if (this.handleNetworkError(hls, data)) return;
       } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
         this.events.status('buffering', 'Mencoba pulihkan…');
         hls.recoverMediaError();
@@ -174,6 +165,35 @@ export class Player {
       hls.destroy();
       this.hls = null;
     });
+  }
+
+  /** True when the network error was handled in-place (no teardown needed). */
+  private handleNetworkError(hls: Hls, data: ErrorData): boolean {
+    if (MANIFEST_ERRORS.has(data.details)) {
+      // Dead/expired master (live or expired catch-up token): point at a
+      // fresh resolution before calling it a day.
+      this.events.status('buffering', 'Menunggu program berikutnya…');
+      this.fallbackToAuto();
+      return true;
+    }
+
+    // Give a struggling stream a couple of in-place recoveries first.
+    if (FRAGMENT_ERRORS.has(data.details) && this.fatalCount < 3) {
+      this.events.status('buffering', 'Menunggu segmen berikutnya…');
+      hls.startLoad();
+      return true;
+    }
+
+    // Nothing buffered and fragments still won't load: drop to 'auto' (ABR,
+    // starts at the lowest variant) instead of retrying seg-1 from the top
+    // forever. A lower-bandwidth rendition usually starts where the pinned
+    // 720p would not.
+    if (this.quality !== 'auto') {
+      this.events.status('buffering', 'Mencoba kualitas lebih rendah…');
+      this.fallbackToAuto();
+      return true;
+    }
+    return false;
   }
 
   stop(): void {

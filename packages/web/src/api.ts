@@ -1,6 +1,6 @@
 /** Typed client for the proxy's JSON API (all requests are same-origin). */
 
-export interface Channels {
+interface Channels {
   channels: string[];
 }
 
@@ -12,12 +12,12 @@ export interface ScheduleItem {
   end: string;
 }
 
-export interface Schedule {
+interface Schedule {
   channel: string;
   items: ScheduleItem[];
 }
 
-export interface DayItem {
+interface DayItem {
   epg_id: number;
   date: string;
   title: string;
@@ -26,7 +26,7 @@ export interface DayItem {
   playable: boolean;
 }
 
-export interface PrevResult {
+interface PrevResult {
   date: string | null;
   earliest: string;
   items: DayItem[];
