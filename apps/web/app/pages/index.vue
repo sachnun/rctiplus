@@ -23,7 +23,6 @@ const {
   status,
   statusMessage,
   nowPlaying,
-  quality,
   sideOpen,
   hudVisible,
   activeChannel,
@@ -137,17 +136,6 @@ const isPlaying = (kind: string) => kind === "playing";
     </div>
 
     <div class="absolute top-4 right-4 z-30 flex gap-2">
-      <select
-        v-model="quality"
-        aria-label="Quality"
-        class="hud focusable rounded-sm border border-white/15 bg-black/60 px-2 py-2.5 text-xs text-white/70"
-      >
-        <option value="best">HD</option>
-        <option value="720">720p</option>
-        <option value="480">480p</option>
-        <option value="360">360p</option>
-        <option value="auto">Auto</option>
-      </select>
       <button
         type="button"
         data-focusable

@@ -22,15 +22,12 @@ describe("resolveApiBase", () => {
 describe("createApiClient", () => {
   const api = createApiClient("https://api.example.com/");
 
-  test("builds live stream URLs with a quality pin", () => {
-    expect(api.streamUrl("rcti", "best")).toBe("https://api.example.com/rcti.m3u8?quality=best");
-    expect(api.streamUrl("rcti", "auto")).toBe("https://api.example.com/rcti.m3u8");
+  test("builds live stream URLs", () => {
+    expect(api.streamUrl("rcti")).toBe("https://api.example.com/rcti.m3u8");
   });
 
   test("builds replay URLs", () => {
-    expect(api.replayUrl(328332, "480")).toBe(
-      "https://api.example.com/replay/328332.m3u8?quality=480"
-    );
+    expect(api.replayUrl(328332)).toBe("https://api.example.com/replay/328332.m3u8");
   });
 
   test("encodes JSON API query parameters", () => {

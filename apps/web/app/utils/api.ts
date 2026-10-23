@@ -32,13 +32,9 @@ export type ApiClient = {
   channels(): Promise<Channels>;
   schedule(channel: string): Promise<Schedule>;
   historyPrev(before: string, channel: string): Promise<PrevResult>;
-  streamUrl(channel: string, quality: string): string;
-  replayUrl(epgId: number, quality: string): string;
+  streamUrl(channel: string): string;
+  replayUrl(epgId: number): string;
 };
-
-function qualitySuffix(quality: string): string {
-  return quality === "auto" ? "" : `?quality=${quality}`;
-}
 
 export function createApiClient(baseUrl: string): ApiClient {
   const root = baseUrl.replace(/\/+$/, "");
@@ -57,8 +53,7 @@ export function createApiClient(baseUrl: string): ApiClient {
       getJson<PrevResult>(
         `/history/prev?before=${encodeURIComponent(before)}&channel=${encodeURIComponent(channel)}`
       ),
-    streamUrl: (channel, quality) =>
-      `${root}/${encodeURIComponent(channel)}.m3u8${qualitySuffix(quality)}`,
-    replayUrl: (epgId, quality) => `${root}/replay/${epgId}.m3u8${qualitySuffix(quality)}`,
+    streamUrl: (channel) => `${root}/${encodeURIComponent(channel)}.m3u8`,
+    replayUrl: (epgId) => `${root}/replay/${epgId}.m3u8`,
   };
 }

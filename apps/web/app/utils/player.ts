@@ -8,10 +8,6 @@ export type PlayerEvents = {
   ended(): void;
 };
 
-export type PlayerOptions = {
-  quality?: string;
-};
-
 /**
  * HLS playback engine. Always hls.js, never the browser's native HLS, which
  * some browsers spin in a tight loop against live manifests.
@@ -21,15 +17,15 @@ export class Player {
   private readonly video: HTMLVideoElement;
   private readonly events: PlayerEvents;
   private playing = false;
-  private quality: string;
   private currentUrl: string | null = null;
   private currentLabel = "";
   private fatalCount = 0;
+  private manifestRetries = 0;
+  private retryTimer: ReturnType<typeof setTimeout> | undefined;
 
-  constructor(video: HTMLVideoElement, events: PlayerEvents, options: PlayerOptions = {}) {
+  constructor(video: HTMLVideoElement, events: PlayerEvents) {
     this.video = video;
     this.events = events;
-    this.quality = options.quality ?? "best";
 
     video.addEventListener("playing", () => {
       this.playing = true;
@@ -56,18 +52,21 @@ export class Player {
     return this.currentLabel;
   }
 
-  setQuality(quality: string): void {
-    this.quality = quality;
-    if (this.currentUrl) this.play(this.currentUrl, this.currentLabel);
-  }
-
-  private fallbackToAuto(): void {
-    if (this.quality === "auto") return;
-    this.quality = "auto";
-    if (this.currentUrl) this.play(this.currentUrl, this.currentLabel);
+  private retryManifest(): boolean {
+    if (this.retryTimer !== undefined || this.manifestRetries >= 2) return false;
+    const url = this.currentUrl;
+    const label = this.currentLabel;
+    if (!url) return false;
+    this.manifestRetries += 1;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      if (this.currentUrl === url) this.play(url, label);
+    }, 3000);
+    return true;
   }
 
   play(url: string, label: string): void {
+    if (url !== this.currentUrl) this.manifestRetries = 0;
     this.currentUrl = url;
     this.currentLabel = label;
     this.stop();
@@ -80,6 +79,8 @@ export class Player {
     }
 
     const hls = new Hls({
+      testBandwidth: false,
+      abrEwmaDefaultEstimate: 1_000_000,
       liveSyncDurationCount: 3,
       maxBufferLength: 30,
       maxMaxBufferLength: 60,
@@ -108,6 +109,7 @@ export class Player {
     hls.loadSource(url);
     hls.attachMedia(this.video);
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      this.manifestRetries = 0;
       this.events.status("buffering", "Loading...");
       this.video.play().catch(() => this.events.status("idle", "Autoplay blocked, press play."));
     });
@@ -119,9 +121,8 @@ export class Player {
         const manifestError =
           data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
           data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT;
-        if (manifestError) {
+        if (manifestError && this.retryManifest()) {
           this.events.status("buffering", "Waiting for the next program...");
-          this.fallbackToAuto();
           return;
         }
 
@@ -134,12 +135,6 @@ export class Player {
         if (fragmentError && this.fatalCount < 3) {
           this.events.status("buffering", "Waiting for the next segment...");
           hls.startLoad();
-          return;
-        }
-
-        if (this.quality !== "auto") {
-          this.events.status("buffering", "Trying a lower quality...");
-          this.fallbackToAuto();
           return;
         }
       } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
@@ -156,6 +151,10 @@ export class Player {
 
   stop(): void {
     this.fatalCount = 0;
+    if (this.retryTimer !== undefined) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
+    }
     if (this.hls) {
       this.hls.destroy();
       this.hls = null;

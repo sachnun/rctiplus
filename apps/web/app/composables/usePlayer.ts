@@ -1,4 +1,4 @@
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import { Player, type PlaybackStatus } from "~/utils/player";
 
 const HUD_IDLE_MS = 3500;
@@ -11,7 +11,6 @@ export function usePlayer() {
   const status = ref<PlaybackStatus>("idle");
   const statusMessage = ref("");
   const nowPlaying = ref("");
-  const quality = ref("best");
   const sideOpen = ref(false);
   const hudVisible = ref(false);
   const activeChannel = ref("");
@@ -36,17 +35,15 @@ export function usePlayer() {
   function playChannel(channel: string, api: ReturnType<typeof useApi>): void {
     activeChannel.value = channel;
     activeEpgId.value = null;
-    player.value?.play(api.streamUrl(channel, quality.value), channel.toUpperCase());
+    player.value?.play(api.streamUrl(channel), channel.toUpperCase());
   }
 
   function playReplay(epgId: number, title: string, api: ReturnType<typeof useApi>): void {
     activeEpgId.value = epgId;
     sideOpen.value = false;
-    player.value?.play(api.replayUrl(epgId, quality.value), title);
+    player.value?.play(api.replayUrl(epgId), title);
     wake();
   }
-
-  watch(quality, (next) => player.value?.setQuality(next));
 
   onMounted(() => {
     if (!video.value) return;
@@ -82,7 +79,6 @@ export function usePlayer() {
     status,
     statusMessage,
     nowPlaying,
-    quality,
     sideOpen,
     hudVisible,
     activeChannel,
