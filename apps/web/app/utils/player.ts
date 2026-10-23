@@ -1,0 +1,166 @@
+import Hls from "hls.js";
+
+export type PlaybackStatus = "playing" | "buffering" | "error" | "idle";
+
+export type PlayerEvents = {
+  status(status: PlaybackStatus, message: string): void;
+  nowPlaying(label: string): void;
+  ended(): void;
+};
+
+export type PlayerOptions = {
+  quality?: string;
+};
+
+/**
+ * HLS playback engine. Always hls.js, never the browser's native HLS, which
+ * some browsers spin in a tight loop against live manifests.
+ */
+export class Player {
+  private hls: Hls | null = null;
+  private readonly video: HTMLVideoElement;
+  private readonly events: PlayerEvents;
+  private playing = false;
+  private quality: string;
+  private currentUrl: string | null = null;
+  private currentLabel = "";
+  private fatalCount = 0;
+
+  constructor(video: HTMLVideoElement, events: PlayerEvents, options: PlayerOptions = {}) {
+    this.video = video;
+    this.events = events;
+    this.quality = options.quality ?? "best";
+
+    video.addEventListener("playing", () => {
+      this.playing = true;
+      this.events.status("playing", "");
+    });
+    video.addEventListener("waiting", () => this.events.status("buffering", "Buffering..."));
+    video.addEventListener("pause", () => this.events.status("idle", "Paused"));
+    video.addEventListener("ended", () => {
+      this.events.status("playing", "Finished");
+      this.events.ended();
+    });
+    video.addEventListener("play", (event) => {
+      if (!event.isTrusted || this.playing) return;
+      const url = this.currentUrl;
+      const label = this.currentLabel;
+      if (!url) return;
+      setTimeout(() => {
+        if (!this.playing && this.video.currentTime === 0 && url) this.play(url, label);
+      }, 500);
+    });
+  }
+
+  get label(): string {
+    return this.currentLabel;
+  }
+
+  setQuality(quality: string): void {
+    this.quality = quality;
+    if (this.currentUrl) this.play(this.currentUrl, this.currentLabel);
+  }
+
+  private fallbackToAuto(): void {
+    if (this.quality === "auto") return;
+    this.quality = "auto";
+    if (this.currentUrl) this.play(this.currentUrl, this.currentLabel);
+  }
+
+  play(url: string, label: string): void {
+    this.currentUrl = url;
+    this.currentLabel = label;
+    this.stop();
+    this.playing = false;
+    this.events.nowPlaying(label);
+
+    if (!Hls.isSupported()) {
+      this.events.status("error", "hls.js is unavailable in this browser.");
+      return;
+    }
+
+    const hls = new Hls({
+      liveSyncDurationCount: 3,
+      maxBufferLength: 30,
+      maxMaxBufferLength: 60,
+      backBufferLength: 90,
+      startFragPrefetch: true,
+      manifestLoadPolicy: {
+        default: {
+          maxTimeToFirstByteMs: 30_000,
+          maxLoadTimeMs: 60_000,
+          timeoutRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 30_000 },
+          errorRetry: { maxNumRetry: 4, retryDelayMs: 1000, maxRetryDelayMs: 30_000 },
+        },
+      },
+      fragLoadPolicy: {
+        default: {
+          maxTimeToFirstByteMs: 45_000,
+          maxLoadTimeMs: 120_000,
+          timeoutRetry: { maxNumRetry: 12, retryDelayMs: 1000, maxRetryDelayMs: 90_000 },
+          errorRetry: { maxNumRetry: 12, retryDelayMs: 1000, maxRetryDelayMs: 90_000 },
+        },
+      },
+    });
+
+    this.hls = hls;
+    this.fatalCount = 0;
+    hls.loadSource(url);
+    hls.attachMedia(this.video);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      this.events.status("buffering", "Loading...");
+      this.video.play().catch(() => this.events.status("idle", "Autoplay blocked, press play."));
+    });
+    hls.on(Hls.Events.ERROR, (_event, data) => {
+      if (!data?.fatal) return;
+      this.fatalCount += 1;
+
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        const manifestError =
+          data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
+          data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT;
+        if (manifestError) {
+          this.events.status("buffering", "Waiting for the next program...");
+          this.fallbackToAuto();
+          return;
+        }
+
+        const fragmentError =
+          data.details === Hls.ErrorDetails.FRAG_LOAD_ERROR ||
+          data.details === Hls.ErrorDetails.FRAG_LOAD_TIMEOUT ||
+          data.details === Hls.ErrorDetails.LEVEL_LOAD_ERROR ||
+          data.details === Hls.ErrorDetails.LEVEL_LOAD_TIMEOUT;
+
+        if (fragmentError && this.fatalCount < 3) {
+          this.events.status("buffering", "Waiting for the next segment...");
+          hls.startLoad();
+          return;
+        }
+
+        if (this.quality !== "auto") {
+          this.events.status("buffering", "Trying a lower quality...");
+          this.fallbackToAuto();
+          return;
+        }
+      } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+        this.events.status("buffering", "Recovering...");
+        hls.recoverMediaError();
+        return;
+      }
+
+      this.events.status("error", `Playback error: ${data.details || data.type}`);
+      hls.destroy();
+      this.hls = null;
+    });
+  }
+
+  stop(): void {
+    this.fatalCount = 0;
+    if (this.hls) {
+      this.hls.destroy();
+      this.hls = null;
+    }
+    this.video.removeAttribute("src");
+    this.video.load();
+  }
+}
