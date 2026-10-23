@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createApiClient } from "../app/utils/api";
+import { shouldRestartOnPlay } from "../app/utils/player";
 import {
   addDays,
   formatDate,
@@ -84,5 +85,19 @@ describe("titleSimilarity", () => {
 
   test("normalizes punctuation and case", () => {
     expect(normalizeTitle("Kuis 'Ajaib'!")).toBe("kuis ajaib");
+  });
+});
+
+describe("shouldRestartOnPlay", () => {
+  test("keeps an attached player running", () => {
+    expect(shouldRestartOnPlay({ attached: true, now: 1_000, lastRestartAt: 0 })).toBe(false);
+  });
+
+  test("restarts a detached player once the guard window passed", () => {
+    expect(shouldRestartOnPlay({ attached: false, now: 5_000, lastRestartAt: 0 })).toBe(true);
+  });
+
+  test("ignores a restart request inside the guard window", () => {
+    expect(shouldRestartOnPlay({ attached: false, now: 1_500, lastRestartAt: 1_000 })).toBe(false);
   });
 });

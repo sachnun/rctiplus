@@ -8,6 +8,24 @@ export type PlayerEvents = {
   ended(): void;
 };
 
+const RESTART_GUARD_MS = 2000;
+const MAX_MEDIA_RECOVERIES = 2;
+
+/**
+ * Decide whether a trusted `play` event should rebuild the HLS session. Only an
+ * unattached player (fatal error, destroyed session) needs a restart, and only
+ * once per guard window: rebuilding on every `play` event loops forever when a
+ * replay program still sits at `currentTime` 0 while its first segment loads.
+ */
+export function shouldRestartOnPlay(state: {
+  attached: boolean;
+  now: number;
+  lastRestartAt: number;
+}): boolean {
+  if (state.attached) return false;
+  return state.now - state.lastRestartAt >= RESTART_GUARD_MS;
+}
+
 /**
  * HLS playback engine. Always hls.js, never the browser's native HLS, which
  * some browsers spin in a tight loop against live manifests.
@@ -20,8 +38,10 @@ export class Player {
   private currentUrl: string | null = null;
   private currentLabel = "";
   private fatalCount = 0;
+  private mediaRecoveries = 0;
   private manifestRetries = 0;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
+  private restartAt = 0;
 
   constructor(video: HTMLVideoElement, events: PlayerEvents) {
     this.video = video;
@@ -38,13 +58,14 @@ export class Player {
       this.events.ended();
     });
     video.addEventListener("play", (event) => {
-      if (!event.isTrusted || this.playing) return;
+      if (!event.isTrusted) return;
+      const now = Date.now();
+      const attached = this.hls !== null;
+      if (!shouldRestartOnPlay({ attached, now, lastRestartAt: this.restartAt })) return;
       const url = this.currentUrl;
-      const label = this.currentLabel;
       if (!url) return;
-      setTimeout(() => {
-        if (!this.playing && this.video.currentTime === 0 && url) this.play(url, label);
-      }, 500);
+      this.restartAt = now;
+      this.play(url, this.currentLabel);
     });
   }
 
@@ -106,6 +127,7 @@ export class Player {
 
     this.hls = hls;
     this.fatalCount = 0;
+    this.mediaRecoveries = 0;
     hls.loadSource(url);
     hls.attachMedia(this.video);
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -138,9 +160,12 @@ export class Player {
           return;
         }
       } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-        this.events.status("buffering", "Recovering...");
-        hls.recoverMediaError();
-        return;
+        if (this.mediaRecoveries < MAX_MEDIA_RECOVERIES) {
+          this.mediaRecoveries += 1;
+          this.events.status("buffering", "Recovering...");
+          hls.recoverMediaError();
+          return;
+        }
       }
 
       this.events.status("error", `Playback error: ${data.details || data.type}`);
@@ -151,6 +176,7 @@ export class Player {
 
   stop(): void {
     this.fatalCount = 0;
+    this.mediaRecoveries = 0;
     if (this.retryTimer !== undefined) {
       clearTimeout(this.retryTimer);
       this.retryTimer = undefined;
