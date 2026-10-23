@@ -50,6 +50,7 @@ const autoContinue = useAutoContinue({
 onEnded(() => autoContinue.handleEnded());
 
 function selectChannel(channel: string): void {
+  setSide(false);
   playChannel(channel, api);
 }
 

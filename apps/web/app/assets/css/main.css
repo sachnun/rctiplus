@@ -33,6 +33,8 @@ body {
 }
 
 .side-panel {
+  position: relative;
+  z-index: 20;
   transform: translateX(-100%);
 }
 
