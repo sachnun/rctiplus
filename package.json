@@ -1,23 +1,23 @@
 {
   "name": "rctiplus",
-  "version": "2.1.0",
-  "description": "RCTI+ live TV + catch-up replay proxy — monorepo (api: Hono, web: Vite)",
   "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.4",
   "workspaces": [
-    "packages/*"
+    "apps/*"
   ],
   "scripts": {
-    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w @rctiplus/api\" \"npm run dev -w @rctiplus/web\"",
-    "dev:api": "npm run dev -w @rctiplus/api",
-    "dev:web": "npm run dev -w @rctiplus/web",
-    "build": "npm run build -w @rctiplus/web && npm run build -w @rctiplus/api",
-    "typecheck": "npm run typecheck -w @rctiplus/api && npm run typecheck -w @rctiplus/web",
-    "test": "npm test -w @rctiplus/api"
+    "dev": "bun run --parallel --filter @rctiplus/api --filter @rctiplus/web dev",
+    "build": "bun run --filter @rctiplus/api build && bun run --filter @rctiplus/web build",
+    "lint": "oxlint .",
+    "test": "bun test",
+    "typecheck": "bun run --filter '*' typecheck",
+    "prepare": "bun run --filter '*' prepare",
+    "deploy:api": "bun run --filter @rctiplus/api deploy",
+    "deploy:web": "bun run --filter @rctiplus/web generate"
   },
   "devDependencies": {
-    "concurrently": "^10.0.4"
-  },
-  "allowScripts": {
-    "esbuild@0.28.1": true
+    "oxlint": "^1.89.0",
+    "typescript": "^5.9.3"
   }
 }
