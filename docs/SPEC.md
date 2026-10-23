@@ -1,15 +1,15 @@
 # RCTI+ Proxy — Full Technical Specification
 
-Monorepo (npm workspaces):
+Monorepo (bun workspaces):
 
 ```
-├── api/    Hono + TypeScript proxy (live + replay + schedule/history JSON)
-├── web/    Vite + Tailwind + hls.js browser player (immersive Android-TV UI)
-└── (root)  npm scripts: dev / dev:api / dev:web / build / test / typecheck
+├── apps/api/    Nitro + Effect v4 proxy (live + replay + schedule/history JSON)
+├── apps/web/    Nuxt SPA + Tailwind + hls.js player (immersive Android-TV UI)
+└── (root)       bun scripts: dev / build / test / lint / typecheck
 ```
 
 Reverse-engineered live TV **and** catch-up replay streaming from
-RCTI+ (MNC Group), served through a local proxy so VLC can play it.
+RCTI+ (MNC Group), served through a public proxy so any player can use it.
 
 - **Scope**: RCTI (1), MNCTV (2), GTV (3), iNews (4)
 - **DRM**: none (`is_drm: "no"`)
@@ -41,25 +41,28 @@ RCTI+ (MNC Group), served through a local proxy so VLC can play it.
         past-event.rctiplus.id              catch-up VOD (kkvod basket)
                   │
                   ▼
-            packages/api/src/index.ts (localhost)
+            apps/api (Nitro on Cloudflare Workers)
         - resolves fresh signed URL per request
         - injects Referer header
         - rewrites all playlist URLs through /h/<b64>
-        - serves packages/web/dist (built Vite app) in production
                   │
         ┌─────────┴──────────┐
         ▼                    ▼
-     web/ (Vite player)     VLC
-     hls.js ← /<slug>.m3u8  /replay/<epg>.m3u8
+   apps/web (Nuxt SPA)      VLC
+   hls.js ← /<slug>.m3u8   /replay/<epg>.m3u8
 ```
 
 ### Repository layout & commands
 
-- `npm run dev` — API (:3000) + Vite dev server (:5173, proxies API/HLS to :3000)
-- `npm run build` — builds `packages/web/dist`, then `packages/api/dist`; the API serves
-  `packages/web/dist` at `/` so one port hosts the player + API + HLS proxy
-- `npm test` — API unit tests (vitest)
-- `npm run typecheck` — both packages
+- `bun run dev` — API (:3000) + Nuxt dev server (:3001)
+- `bun run build` — builds the API worker, then the static Nuxt output
+- `bun run test` — `bun test` across both apps
+- `bun run lint` — `oxlint`
+- `bun run typecheck` — both apps
+
+The API runs on Cloudflare Workers (`cloudflare_module` preset) and the player
+is a prerendered SPA deployed to GitHub Pages; the SPA reaches the API through
+`NUXT_PUBLIC_API_BASE`.
 
 ### Why a proxy is required
 
@@ -269,7 +272,7 @@ The 7-day cap is **only the page's listing window** — measured directly:
 So replay is genuinely limited by **CDN retention (~4 months)**, not by the
 7-day listing.  The blocker is discoverability: the id of an old program is
 not listed anywhere public.  The proxy solves that by scanning the EPG id
-space (`packages/api/src/history.ts`):
+space (`apps/api/src/history.ts`):
 
 - **Anchor**: the newest known id comes from the schedule scrape (fallback:
   baked reference in `config.historyRef`), refreshed on a 12 h TTL.
@@ -312,7 +315,7 @@ space (`packages/api/src/history.ts`):
 
 | Route | Purpose |
 |---|---|
-| `GET /` | built Vite player (served from `packages/web/dist` in production; dev uses :5173) |
+| `GET /` | redirects to `/channels` (the player is a separate SPA) |
 | `GET /channels` | channel slugs `{channels: [...]}` (drives the player UI) |
 | `GET /rcti.m3u8` (also `mnctv`, `gtv`, `inews`, `globaltv`) | live master |
 | `GET /{channel}.m3u8?quality={best\|auto\|720\|480\|360\|240\|144}` | live master, quality-pinned (see §6.2 note) |
@@ -360,36 +363,12 @@ no `hdntl`) are not redirected.
 
 ### 6.5 Security model
 
-- Listens on `0.0.0.0:8080` (LAN accessible).
+- Runs as a Cloudflare Worker, reachable over HTTPS from anywhere.
 - `appierid=vlc-proxy` identifies this client to the ad-insertion system.
 - The visitor JWT is refreshed periodically; a static fallback is baked in
   so the proxy survives page-template changes.
-
-### 6.6 Native app — same contract, no proxy
-
-`packages/apk` is a **fully-local native** client that implements the
-same contract as this proxy inside the app, so it needs no server:
-
-| Proxy module | Kotlin mirror | Notes |
-|---|---|---|
-| `token.ts` | `TokenManager.kt` | extracts fresh visitor JWT from the page; **no baked fallback token** in the APK |
-| `rctiplus.ts` | `RctiApi.kt` | `live/{id}/url` + `epg/{id}/url` with TTL cache |
-| `schedule.ts` | `ScheduleScraper.kt` | same `clickCatchup` page regex + entity decode |
-| `history.ts` | `History.kt` | anchor, boundary binary search, WALK probe, per-day cache |
-| `hls.ts` (filter/verify) | `Hls.kt` | picks the best variant; CDN verify for retention edge |
-| routes (`/channels`, …) | `Api.kt` facade | channel list mirrors `config.ts` `CHANNELS` |
-
-Playback: ExoPlayer is configured with `DefaultHttpDataSource.Factory`
-sending `Referer: https://www.rctiplus.com/` (plus `Origin` and the Chrome
-`User-Agent`) on every HLS request — this is what replaces the proxy's
-playlist rewriting for a native player that fetches segments itself. On
-`PlaybackException` the app invalidates the cached URL and re-resolves a
-fresh master (bounded retries) — the same self-heal as §6.4.
-
-**Shared contract**: TS↔Kotlin cannot share code (Cloudflare Workers have no
-Kotlin runtime), so the constants live once in `config.ts` and are mirrored
-in the APK's `Config.kt` (apiKey, Referer, channel→id map, history tuning).
-Keep the two in sync when anything changes.
+- In-process caches (tokens, resolved URLs, schedules, playlists) live in the
+  Worker isolate and reset when it is recycled.
 
 ---
 
@@ -403,6 +382,7 @@ Keep the two in sync when anything changes.
 | Empty schedule | RCTI+ page structure change | update regex in `fetchSchedule()` |
 | Deep date returns no items | beyond the ~4-month CDN retention (or all programs pruned) | `playable` is `false` / empty listing; pick a newer date |
 | `history:range` earliest is fuzzy ±2 days | programs expire asynchronously near the retention edge | treat it as a hint for the date picker, not an exact boundary |
+| Player shows "API unreachable" | `NUXT_PUBLIC_API_BASE` missing or wrong for the Pages build | rebuild the SPA with the Worker origin |
 
 Token lifetimes: `hdnts` ≈ 10 h (query), `hdntl` ≈ 5 h (variant path),
 replay VOD tokens long-lived. `current_date` / `current_ts` fields in API
@@ -441,5 +421,5 @@ token math.
 4. Playlists rewritten through `/h/<b64>` because variant/segment URLs are
    relative and contain Akamai `hdntl` path tokens.
 
-Reversal date: 2026-08-04. API keys/tokens embedded in `packages/api/src/config.ts` may need
+Reversal date: 2026-08-04. API keys/tokens embedded in `apps/api/src/config.ts` may need
 updating if RCTI+ rotates them.
