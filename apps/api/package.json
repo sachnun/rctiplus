@@ -1,0 +1,25 @@
+{
+  "name": "@rctiplus/api",
+  "version": "3.0.0",
+  "description": "RCTI+ live TV + catch-up replay proxy (Nitro + Effect)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "NITRO_PRESET=node nitro dev",
+    "build": "NITRO_PRESET=cloudflare_module nitro build",
+    "preview": "NITRO_PRESET=cloudflare_module nitro build && wrangler dev",
+    "deploy": "NITRO_PRESET=cloudflare_module nitro build && wrangler deploy",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "effect": "4.0.6",
+    "h3": "2.0.8"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "nitro": "3.0.260903-beta",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.152.0"
+  }
+}
