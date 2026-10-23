@@ -1,8 +1,0 @@
-name = "rctiplus"
-main = "packages/api/src/worker.ts"
-compatibility_date = "2025-06-01"
-workers_dev = true
-
-# Built Vite app (player UI); the Worker handles API/HLS routes first and the
-# ASSETS binding serves the static files as fallback.
-assets = { directory = "packages/web/dist", binding = "ASSETS" }
