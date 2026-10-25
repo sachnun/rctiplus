@@ -1,14 +1,14 @@
-# RCTI+ worker
+# RCTI+ proxy
 
-One Cloudflare Worker serves both the player and the HLS proxy. There is no
-separate JSON API: every listing is an M3U playlist, so the same URL works in
-the browser player, in VLC, and as a catalog the player reads for its menu.
-Upstream findings are in [REVERSE.md](./REVERSE.md).
+Two deploys: the proxy worker that speaks HLS, and the static player that reads
+it. The proxy has no JSON API: every listing is an M3U playlist, so the same URL
+works in the browser player, in VLC, and as the catalog the player builds its
+menu from. Upstream findings are in [REVERSE.md](./REVERSE.md).
 
 ```
 apps/api/    Nitro + Effect worker, HLS only, deploy target Cloudflare Workers
-apps/web/    Nuxt SPA, generated to static files and served by the worker
-(root)       bun scripts: dev, build, test, lint, typecheck, deploy
+apps/web/    Nuxt SPA, static files, deploy target GitHub Pages
+(root)       bun scripts: dev, build, test, lint, typecheck, deploy:api, deploy:web
 ```
 
 ## 1. Architecture
@@ -20,28 +20,36 @@ apps/web/    Nuxt SPA, generated to static files and served by the worker
   *.rctiplus.id           HLS playlists and segments
               |
               v
-  worker (Nitro on Cloudflare Workers)
+  apps/api (Nitro on Cloudflare Workers)
   - resolves a fresh signed URL per request
   - injects the Referer header the CDN ACL demands
   - rewrites every playlist URL through /h/<b64>.<ext>
-  - serves the built SPA from static assets
               |
-              v
-  browser player (same origin)      VLC, mpv, ffmpeg
+      +-------+---------+
+      v                 v
+  apps/web          VLC, mpv, ffmpeg
+  (GitHub Pages, cross origin, CORS *)
 ```
 
 | Command | Effect |
 |---|---|
 | `bun run dev` | worker on :3000, Nuxt dev server on :3001 |
-| `bun run build` | builds the SPA, then the worker that embeds it |
-| `bun run deploy` | build and `wrangler deploy` |
+| `bun run build` | builds the worker, then the static SPA |
+| `bun run deploy:api` | `wrangler deploy` the worker as `rctiplus-api` |
+| `bun run deploy:web` | generate the SPA for GitHub Pages |
 | `bun run test` | `bun test` across both apps |
 | `bun run lint` | `oxlint` |
 | `bun run typecheck` | both apps |
 
-The SPA is generated with `ssr: false` and `preset: "static"`; the worker picks
-it up through `publicAssets` pointing at `../web/.output/public`, so a single
-`wrangler deploy` ships player and proxy together.
+The SPA is generated with `ssr: false` and `preset: "static"`, published to
+GitHub Pages under `/<repo>/`. It is served from a different origin than the
+worker, so the worker answers every route with `access-control-allow-origin: *`.
+The page is built with `NUXT_PUBLIC_API_BASE` pointing at the worker, and
+`NUXT_APP_BASE_URL` set to the Pages sub path.
+
+Deploy pipelines are split by path: `apps/api/**` triggers `.github/workflows/api.yml`
+(environment `api`, Worker secrets), `apps/web/**` triggers `.github/workflows/web.yml`
+(environment `web`, Pages).
 
 ### Why a proxy is required
 
@@ -60,7 +68,7 @@ Every route below returns `application/vnd.apple.mpegurl` except the SPA and
 
 | Route | Response |
 |---|---|
-| `GET /` | the SPA |
+| `GET /` | 308 redirect to `/playlist.m3u8` |
 | `GET /playlist.m3u8` | catalog: live channels, then today's finished replay |
 | `GET /live/{channel}.m3u8` | live master |
 | `GET /live/{channel}.m3u8?quality={best\|auto\|720\|480\|360\|240\|144}` | live master, optional single variant pin |
@@ -73,7 +81,7 @@ Every route below returns `application/vnd.apple.mpegurl` except the SPA and
 | `GET /favicon.ico` | 204 |
 | anything else | `unknown route: <path>`, 404 |
 
-CORS is open on every route, so the player can also be hosted elsewhere.
+CORS is open on every route: the Pages build calls the worker cross origin.
 
 ### 2.1 Catalog shape
 
@@ -198,7 +206,7 @@ when it is recycled.
 
 | Player | URL |
 |---|---|
-| VLC | `https://<worker>/playlist.m3u8`, then `N`/`P` to switch, or let it advance |
+| VLC | `https://rctiplus-api.primare.workers.dev/playlist.m3u8`, then `N`/`P` to switch, or let it advance |
 | VLC, single channel | `https://<worker>/live/rcti.m3u8?quality=best` |
 | mpv | `mpv https://<worker>/playlist.m3u8` |
 | ffmpeg | `ffmpeg -i https://<worker>/live/rcti.m3u8 -c copy out.ts` |
@@ -225,7 +233,8 @@ through the adaptive (HLS) demuxer. ffmpeg cannot open a flat M3U listing at all
 | `not in allowed_segment_extensions` | a proxied segment URL lost its extension | keep the `.ts` suffix in `/h/` |
 | VLC opens the catalog as HLS and fails | a `#EXT-X-` tag leaked into a listing | see `HLS_TAGS` |
 | ffmpeg rejects `/playlist.m3u8` | flat M3U has no ffmpeg demuxer | pass a `/live` or `/replay` URL instead |
-| SPA loads but lists nothing | worker cannot reach upstream | check `/playlist.m3u8` directly |
+| SPA loads but lists nothing | `NUXT_PUBLIC_API_BASE` missing or stale | rebuild Pages with the worker origin |
+| SPA calls the wrong worker | the Pages build baked an old `NUXT_PUBLIC_API_BASE` | update the `web` environment variable and re-run the Web workflow |
 
 ## 8. Extensions
 

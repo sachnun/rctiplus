@@ -4,16 +4,9 @@ export default defineConfig({
   preset:
     process.env.NITRO_PRESET ?? (process.env.NODE_ENV === "production" ? "cloudflare_module" : "node"),
   cloudflare: {
-    wrangler: { name: process.env.CLOUDFLARE_WORKER_NAME ?? "rctiplus" },
+    wrangler: { name: process.env.CLOUDFLARE_WORKER_NAME ?? "rctiplus-api" },
   },
   serverDir: "./server",
-  publicAssets: [
-    {
-      baseURL: "/",
-      dir: "../web/.output/public",
-      maxAge: 60,
-    },
-  ],
   compatibilityDate: "2025-07-15",
   devServer: {
     hostname: "localhost",

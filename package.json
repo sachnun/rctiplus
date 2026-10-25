@@ -8,12 +8,13 @@
   ],
   "scripts": {
     "dev": "bun run --parallel --filter @rctiplus/api --filter @rctiplus/web dev",
-    "build": "bun run --filter @rctiplus/web generate && bun run --filter @rctiplus/api build",
+    "build": "bun run --filter @rctiplus/api build && bun run --filter @rctiplus/web generate",
     "lint": "oxlint .",
     "test": "bun test",
     "typecheck": "bun run --filter '*' typecheck",
     "prepare": "bun run --filter '*' prepare",
-    "deploy": "bun run --filter @rctiplus/api deploy"
+    "deploy:api": "bun run --filter @rctiplus/api deploy",
+    "deploy:web": "bun run --filter @rctiplus/web generate"
   },
   "devDependencies": {
     "eslint-plugin-no-comments": "^1.2.1",
