@@ -1,43 +1,48 @@
 import { ref, watch, type Ref } from "vue";
-import type { ApiClient, ScheduleItem } from "~/utils/api";
+import type { ApiClient, DaySection, ReplayItem } from "~/utils/api";
 
-export type ReplaySection = { date: string; items: ScheduleItem[] };
+const BATCH = 3;
 
-/**
- * Infinite replay feed: the 7-day schedule seeds the list, then every scroll
- * to the bottom appends the next older playable day until the archive ends.
- */
 export function useReplayFeed(api: ApiClient) {
-  const sections = ref<ReplaySection[]>([]);
+  const sections = ref<DaySection[]>([]);
   const loading = ref(false);
   const done = ref(false);
   const error = ref("");
-  const oldest = ref("");
+  const dates = ref<string[]>([]);
+  const cursor = ref(0);
 
   function reset(): void {
     sections.value = [];
-    oldest.value = "";
+    dates.value = [];
+    cursor.value = 0;
     done.value = false;
     error.value = "";
+  }
+
+  async function fetchBatch(channel: string): Promise<boolean> {
+    let added = false;
+    for (let i = 0; i < BATCH && cursor.value < dates.value.length; i++) {
+      const date = dates.value[cursor.value]!;
+      cursor.value += 1;
+      const items = await api.day(date, channel);
+      if (!items.length) continue;
+      sections.value = [...sections.value, { date, items }];
+      added = true;
+    }
+    return added;
   }
 
   async function load(channel: string): Promise<void> {
     reset();
     loading.value = true;
     try {
-      const data = await api.schedule(channel);
-      const byDate = new Map<string, ScheduleItem[]>();
-      for (const item of data.items ?? []) {
-        const list = byDate.get(item.date) ?? [];
-        list.push(item);
-        byDate.set(item.date, list);
+      dates.value = await api.days(channel);
+      if (!dates.value.length) {
+        done.value = true;
+        return;
       }
-      const dates = [...byDate.keys()].sort();
-      sections.value = [...dates]
-        .reverse()
-        .map((date) => ({ date, items: byDate.get(date) ?? [] }));
-      oldest.value = dates[0] ?? "";
-      done.value = dates.length === 0;
+      await fetchBatch(channel);
+      done.value = cursor.value >= dates.value.length;
     } catch (cause) {
       error.value = `Failed to load replay: ${(cause as Error).message}`;
       done.value = true;
@@ -47,18 +52,11 @@ export function useReplayFeed(api: ApiClient) {
   }
 
   async function loadMore(channel: string): Promise<void> {
-    if (loading.value || done.value || !oldest.value) return;
+    if (loading.value || done.value || cursor.value >= dates.value.length) return;
     loading.value = true;
     try {
-      const res = await api.historyPrev(oldest.value, channel);
-      if (res.date && res.items.length) {
-        sections.value = [
-          ...sections.value,
-          { date: res.date, items: res.items as unknown as ScheduleItem[] },
-        ];
-        oldest.value = res.date;
-      }
-      done.value = res.end;
+      await fetchBatch(channel);
+      done.value = cursor.value >= dates.value.length;
     } catch (cause) {
       error.value = `Failed to load: ${(cause as Error).message}`;
       done.value = true;
@@ -67,10 +65,18 @@ export function useReplayFeed(api: ApiClient) {
     }
   }
 
-  return { sections, loading, done, error, oldest, load, loadMore, reset };
+  
+  function find(epgId: number): ReplayItem | null {
+    for (const section of sections.value) {
+      const hit = section.items.find((item) => item.epgId === epgId);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  return { sections, loading, done, error, dates, cursor, load, loadMore, reset, find };
 }
 
-/** Watch a channel ref and (re)load the replay feed for it. */
 export function useReplayForChannel(api: ApiClient, channel: Ref<string>) {
   const feed = useReplayFeed(api);
   watch(

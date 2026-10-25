@@ -3,7 +3,6 @@ import { Player, type PlaybackStatus } from "~/utils/player";
 
 const HUD_IDLE_MS = 3500;
 
-/** Immersive TV player state: playback, chrome visibility and the side panel. */
 export function usePlayer() {
   let endedHandler: (() => void) | undefined;
   const video = ref<HTMLVideoElement | null>(null);

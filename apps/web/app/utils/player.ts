@@ -11,12 +11,6 @@ export type PlayerEvents = {
 const RESTART_GUARD_MS = 2000;
 const MAX_MEDIA_RECOVERIES = 2;
 
-/**
- * Decide whether a trusted `play` event should rebuild the HLS session. Only an
- * unattached player (fatal error, destroyed session) needs a restart, and only
- * once per guard window: rebuilding on every `play` event loops forever when a
- * replay program still sits at `currentTime` 0 while its first segment loads.
- */
 export function shouldRestartOnPlay(state: {
   attached: boolean;
   now: number;
@@ -26,10 +20,6 @@ export function shouldRestartOnPlay(state: {
   return state.now - state.lastRestartAt >= RESTART_GUARD_MS;
 }
 
-/**
- * HLS playback engine. Always hls.js, never the browser's native HLS, which
- * some browsers spin in a tight loop against live manifests.
- */
 export class Player {
   private hls: Hls | null = null;
   private readonly video: HTMLVideoElement;

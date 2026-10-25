@@ -1,13 +1,13 @@
-name: API
+name: Deploy
 
 on:
   push:
     branches: [main]
     paths:
-      - "apps/api/**"
+      - "apps/**"
       - "package.json"
       - "bun.lock"
-      - ".github/workflows/api.yml"
+      - ".github/workflows/deploy.yml"
   workflow_dispatch:
 
 permissions:
@@ -15,16 +15,16 @@ permissions:
   deployments: write
 
 concurrency:
-  group: cloudflare-workers-api
+  group: cloudflare-worker
   cancel-in-progress: true
 
 jobs:
   deploy:
-    name: Deploy to Cloudflare Workers
+    name: Build and deploy worker
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
-      name: api
+      name: production
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -35,11 +35,14 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Test
-        run: bun run --filter @rctiplus/api test
+      - name: Lint
+        run: bun run lint
 
-      - name: Build
-        run: bun run --filter @rctiplus/api build
+      - name: Test
+        run: bun test
+
+      - name: Build player and worker
+        run: bun run build
 
       - name: Deploy
         uses: cloudflare/wrangler-action@v3

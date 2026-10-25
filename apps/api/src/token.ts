@@ -1,14 +1,6 @@
 import { Clock, Context, Effect, Layer, Ref } from "effect";
 import { CONFIG } from "./config.js";
 
-/**
- * Anonymous visitor JWT manager.
- *
- * Every JSON API call must carry `Authorization: <visitor JWT>` plus the
- * `apikey` header. The web app embeds a fresh token in every page render
- * (`var visitorsToken = "..."`); the manager re-extracts it periodically and
- * falls back to the baked token when extraction fails.
- */
 export class TokenManager extends Context.Service<
   TokenManager,
   {

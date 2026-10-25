@@ -4,7 +4,6 @@ import { Cache } from "./cache.js";
 import { ProxyError } from "./errors.js";
 import { TokenManager } from "./token.js";
 
-/** Program metadata returned by `/epg/{id}/url` (`data.epg_details`). */
 export type EpgDetails = {
   readonly id: number;
   readonly title: string;
@@ -16,7 +15,6 @@ export type EpgDetails = {
   readonly label?: string;
 };
 
-/** A resolved catch-up: the signed VOD master URL plus program details. */
 export type ResolvedEpg = {
   readonly url: string;
   readonly details?: EpgDetails;
@@ -29,12 +27,6 @@ type ApiReply = {
   };
 };
 
-/**
- * RCTI+ JSON API client (`toutatis.rctiplus.com/video/live/api/v1`).
- *
- * Resolves signed master playlist URLs for live channels and catch-up EPG ids.
- * Results are cached because the tokens in them are valid for a few hours.
- */
 export class RctiApi extends Context.Service<
   RctiApi,
   {
@@ -111,5 +103,4 @@ export class RctiApi extends Context.Service<
   );
 }
 
-/** Current time in epoch milliseconds, from the Effect clock. */
 export const nowMillis: Effect.Effect<number> = Clock.currentTimeMillis;

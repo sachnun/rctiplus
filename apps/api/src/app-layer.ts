@@ -28,7 +28,6 @@ const RoutesLayer = Routes.layer.pipe(
   Layer.provideMerge(HistoryLayer)
 );
 
-/** Every service the HTTP layer needs, fully wired. */
 export const AppLayer = Layer.mergeAll(
   InfraLayer,
   ApiLayer,

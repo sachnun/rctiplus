@@ -2,11 +2,6 @@ import { Clock, Context, Effect, Layer, Ref } from "effect";
 
 export type CacheEntry = { readonly value: unknown; readonly at: number };
 
-/**
- * Minimal TTL cache shared across the proxy services.
- *
- * Keys are plain strings (`live:1`, `epg:328332`, `schedule:rcti`, ...).
- */
 export class Cache extends Context.Service<
   Cache,
   {

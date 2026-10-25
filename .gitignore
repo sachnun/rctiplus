@@ -3,7 +3,7 @@ node_modules/
 .nitro/
 .output/
 .wrangler/
-dist/
+dist
 coverage/
 *.log
 .env

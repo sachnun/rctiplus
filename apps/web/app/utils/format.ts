@@ -4,7 +4,6 @@ export function resolveApiBase(configured: unknown): string {
   return import.meta.dev ? "http://localhost:3000" : "";
 }
 
-/** Dynamic date labels: relative names for near dates, otherwise a long form. */
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MONTHS = [
   "January",
@@ -43,7 +42,6 @@ export function addDays(dateStr: string, days: number): string {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
-/** Normalize a title for loose comparison: lowercase, non-alphanumerics to spaces. */
 export function normalizeTitle(value: string): string {
   return value
     .toLowerCase()
@@ -51,10 +49,6 @@ export function normalizeTitle(value: string): string {
     .trim();
 }
 
-/**
- * Title similarity in [0,1] via the LCS ratio, tolerant of small per-day
- * wording drift and episode-number suffixes in schedule titles.
- */
 export function titleSimilarity(a: string, b: string): number {
   const x = normalizeTitle(a);
   const y = normalizeTitle(b);

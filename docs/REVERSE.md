@@ -16,7 +16,10 @@ Reversal date: 2026 08 04. Retention measurements: 2026 08 05.
 | Transport | HLS: master, variant, MPEG TS segments |
 | Live ladder | 5 variants, 144p to 720p, H.264 + AAC, 25 fps |
 | Replay window | the page lists 7 days, the CDN keeps about 4 months |
-| Protections | Referer ACL, Akamai `hdnts` and `hdntl` tokens, visitor JWT, expiring URLs |
+| Catch-up window | `allcutv` time window, about 6 days |
+| Protections | Referer ACL, signed `auth_key` tokens, visitor JWT, expiring URLs |
+| Live host | `proxy-b.rctiplus.id/live/web/{channel}/index.m3u8` |
+| Catch-up host | `allcutv.rctiplus.id/{channel}-sdi.m3u8?begin=<unix>&end=<unix>` |
 
 ## 2. Upstream topology
 
@@ -30,8 +33,9 @@ RCTI+ backend
         | signed HLS URL + visitor JWT
         v
 CDN *.rctiplus.id (Tengine)
-  rcti-linier / mnctv-linier / gtv-linier / inews-linier   live
-  past-event.rctiplus.id                                   replay VOD
+  proxy-b.rctiplus.id/live/web/{channel}/index.m3u8         live
+  allcutv.rctiplus.id/{channel}-sdi.m3u8?begin&end          catch-up window
+  past-event.rctiplus.id/vids/.../rctiplus.m3u8             catch-up VOD
 ```
 
 Both layers reject requests that miss the Referer header. The CDN also demands
@@ -166,35 +170,51 @@ fetched without the header.
 
 ### 5.2 Live HLS
 
-Hosts: `rcti-linier`, `mnctv-linier`, `gtv-linier`, `inews-linier`, all under
-`rctiplus.id`.
+Current host: `proxy-b.rctiplus.id/live/web/{channel}/index.m3u8`. Legacy hosts
+`rcti-linier`, `mnctv-linier`, `gtv-linier`, `inews-linier` still answer the
+same shape.
 
-Master: `/{channel}-sdi.m3u8?hdnts=exp=<unix>~hmac=<sha256>`, an Akamai token
-in the query string, valid about 10 hours.
-
-Variant lines are relative and carry a second token (`hdntl`, valid about 5
-hours) in the path:
-
-```
-#EXT-X-STREAM-INF:BANDWIDTH=1272655,RESOLUTION=1280x720,...
-hdntl=exp=1785913745~acl=%2F*~data=hdntl~hmac=<sha256>/rcti-sdi-avc1_1000000=17-mp4a_96000=1.m3u8
-```
+Master query: `auth_key=<exp>-<hmac>-0-<hmac>`, valid about 3 hours (measured
+2026 10 25: expiry minus now was 2.99 h). Variants and segments carry their own
+`auth_key`, and a token only works for the path it was issued for: reusing the
+RCTI token on `mnctv` answers 403.
 
 Five variants: 256x144, 426x240, 640x360, 854x480, 1280x720, H.264 + AAC at 25
-fps.
+fps. Variant playlist: `#EXT-X-TARGETDURATION:4`, sliding window with
+`#EXT-X-MEDIA-SEQUENCE`, `#EXT-X-PROGRAM-DATE-TIME` about 7 to 10 seconds behind
+the clock.
 
 Segments, relative to the variant URL directory:
 
 ```
-rcti-sdi-avc1_210000=10-mp4a_96000=1-begin=3657884650000000-dur=40000000-seq=91447117.ts
+rcti-sdi-avc1_210000=10-mp4a_96000=1-begin=3657884650000000-dur=40000000-seq=91447117.ts?auth_key=...
 ```
 
-The variant playlist uses `#EXT-X-TARGETDURATION:4` and a sliding window with
-`#EXT-X-MEDIA-SEQUENCE`.
+A segment path without its `auth_key` answers 403, so tokens cannot be stripped
+from segment URLs.
 
-### 5.3 Replay HLS
+### 5.3 Catch-up HLS
 
-Host: `past-event.rctiplus.id`. The master URL is a bitrate basket template:
+Two shapes are in use. A program that already ended resolves to a time window
+on `allcutv.rctiplus.id`:
+
+```
+/rcti-sdi.m3u8?begin=<unix>&end=<unix>
+```
+
+`begin` and `end` are free parameters inside the retention window. The variant
+playlist is `#EXT-X-PLAYLIST-TYPE:EVENT`, and `#EXT-X-ENDLIST` appears once the
+window has fully passed, which makes the file a VOD. A window whose `begin` is
+older than retention answers 410, and one that starts just past it answers 404.
+Measured 2026 10 25: `begin=-5d` works, `-6d` fails, so the window is about 6
+days.
+
+Masters of this shape list every quality twice (two encoders with the same
+`RESOLUTION` and `BANDWIDTH`), so a proxy should dedupe them before handing the
+playlist to a player.
+
+Older programs resolve to the bitrate basket template on
+`past-event.rctiplus.id`:
 
 ```
 /vids/{slug}-{hex}-{DDMMYY}/v_,2.,3.,mp4.kkvod/rctiplus.m3u8
@@ -217,13 +237,20 @@ observed.
 
 | Token | Location | Life |
 |---|---|---|
-| `hdnts` | live master query | about 10 hours |
-| `hdntl` | live variant path | about 5 hours |
-| VOD token | replay master and variants | long lived, no refresh seen |
+| `auth_key` | live master, variants and segments | about 3 hours |
+| `begin`/`end` | catch-up window on `allcutv` | no signature, free within retention |
+| VOD token | `past-event` master and variants | long lived, no refresh seen |
 
 The `current_date` and `current_ts` fields in API replies follow the server
 clock. A proxy should resolve the stream again instead of computing token
 expiry.
+
+### 5.5 Player compatibility
+
+A rewritten playlist must keep a file extension on every URL. ffmpeg, and
+therefore VLC, rejects a segment URL that does not end in a known extension
+(`not in allowed_segment_extensions`), so a bare `/h/<base64>` proxy path is
+not enough.
 
 ## 6. Schedule listing
 
@@ -268,6 +295,7 @@ The 7 day cap is only the listing window. Measured on 2026 08 05:
 | Schedule page and `live-getcatchup` | 7 days | page renders exactly 7 dates, ajax empty |
 | API `/epg/{id}/url` | indefinite | ids as old as 2025 03 27 resolve |
 | CDN `past-event.rctiplus.id` | about 4 months | masters answer 200 from 2026 03 31, 502 before |
+| CDN `allcutv.rctiplus.id` | about 6 days | `begin=-5d` answers 200, `-6d` answers 404, `-6.5d` answers 410 |
 
 Replay is therefore limited by CDN retention, not by the listing. The blocker
 is discoverability: an old program id appears nowhere public.
@@ -338,10 +366,12 @@ each day for 10 minutes and each resolved id for 5 minutes.
 | Signal | Likely cause | Recheck |
 |---|---|---|
 | API replies 401 or 403 | visitor JWT or apikey rotated | read `visitorsToken` from the channel page and compare `apikey` in the page source |
+| Live master host changed | CDN migration | probe `live/1/url` and inspect the returned host |
+| Catch-up master answers 410 | window older than retention | move `begin` forward, retention is about 6 days |
 | API replies `Server Error` | backend outage or bad parameters | retry, then probe a known good id |
 | Schedule is empty | page structure changed | inspect anchors in `https://www.rctiplus.com/tv/rcti` |
 | Deep date resolves but the CDN answers 502 | program beyond retention | probe one older and one newer master |
-| Live playback stops after hours | `hdnts` or `hdntl` expired | refetch the master and compare token expiry |
+| Live playback stops after hours | `auth_key` expired | refetch the master and compare token expiry |
 | Id rate drifts | programs are added at a different pace | derive ids per day from two known dates |
 
 Probe commands:
@@ -360,6 +390,10 @@ curl -s -H "Authorization: $TOKEN" \
 
 # CDN with the Referer ACL
 curl -s -H 'Referer: https://www.rctiplus.com/' "$MASTER" | head
+
+# catch-up window, free begin and end
+curl -s -H 'Referer: https://www.rctiplus.com/' \
+  "https://allcutv.rctiplus.id/rcti-sdi.m3u8?begin=$(( $(date +%s) - 86400 ))&end=$(date +%s)" | head
 ```
 
 The API key and fallback token embedded in `apps/api/src/config.ts` need

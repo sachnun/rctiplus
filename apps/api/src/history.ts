@@ -5,7 +5,6 @@ import { ProxyError } from "./errors.js";
 import { RctiApi, type EpgDetails, type ResolvedEpg } from "./rctiplus.js";
 import { ScheduleService } from "./schedule.js";
 
-/** One playable-or-not program found for a date. */
 export type DayItem = {
   readonly epg_id: number;
   readonly title: string;
@@ -24,19 +23,10 @@ export type DayResult = {
   readonly items: ReadonlyArray<DayItem>;
 };
 
-/** Playable catch-up window as known by the CDN. */
 export type HistoryRange = {
   readonly earliest: string;
   readonly latest: string;
   readonly days: number;
-};
-
-/** Result of walking one step further back in time (for infinite scroll). */
-export type PrevResult = {
-  readonly date: string | null;
-  readonly earliest: string;
-  readonly items: ReadonlyArray<DayItem>;
-  readonly end: boolean;
 };
 
 const IDS_PER_DAY = 73;
@@ -44,19 +34,20 @@ const RATE_MAX = 120;
 const MAX_BACK_DAYS = 200;
 const SCAN_BEFORE = 10;
 const SCAN_AFTER = 210;
-const RECENT_DAYS = 30;
 
-/**
- * Probe offsets, growing so a search can walk across the dead gaps that
- * appear in the archive region of the id space.
- */
+const MAX_LISTING_DAYS = 120;
+
 const WALK = [
   0, 1, -1, 2, -2, 3, -3, 5, -5, 8, -8, 13, -13, 21, -21, 34, -34, 55, -55, 89, -89, 144, -144,
 ];
 
-/** Parse `YYYY-MM-DD` as UTC midnight (dates are timezone-agnostic labels). */
 function parseDate(date: string): number {
   return Date.parse(`${date}T00:00:00Z`);
+}
+
+function nowClock(): string {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 }
 
 function todayLocal(): string {
@@ -76,20 +67,11 @@ function addDays(date: string, days: number): string {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-/**
- * Deep catch-up history discovery, replay beyond the 7-day schedule window.
- *
- * The page only lists 7 days, but the VOD files on `past-event.rctiplus.id`
- * are kept for ~4 months. An unknown older program is found by scanning the
- * EPG id space: anchor the newest known id, binary-search the id range to the
- * target date boundary, scan around it, and verify playability on the CDN.
- */
 export class HistoryService extends Context.Service<
   HistoryService,
   {
     fetchDay(date: string, channel?: string): Effect.Effect<DayResult, ProxyError>;
     fetchRange(): Effect.Effect<HistoryRange, ProxyError>;
-    fetchPrev(before: string, channel?: string): Effect.Effect<PrevResult, ProxyError>;
   }
 >()("rctiplus/HistoryService") {
   static readonly layer = Layer.effect(
@@ -99,6 +81,7 @@ export class HistoryService extends Context.Service<
       const api = yield* RctiApi;
       const schedule = yield* ScheduleService;
 
+      
       const verifyMaster = (url: string): Effect.Effect<boolean> =>
         Effect.tryPromise({
           try: async () => {
@@ -151,7 +134,7 @@ export class HistoryService extends Context.Service<
         }
       );
 
-      /** Resolve an id, walking across dead gaps to the nearest live program. */
+      
       const probeNear = (id: number): Effect.Effect<ResolvedEpg | null> =>
         Effect.gen(function* () {
           for (const offset of WALK) {
@@ -166,10 +149,7 @@ export class HistoryService extends Context.Service<
           return null;
         });
 
-      /**
-       * Binary-search the id range for the first live id whose program date is
-       * on or after the target date.
-       */
+      
       const locateBoundary = (
         anchor: { id: number; date: string },
         date: string
@@ -236,7 +216,7 @@ export class HistoryService extends Context.Service<
               channel,
               date,
               url: item.url,
-              playable: true,
+              playable: item.end <= nowClock(),
             }));
           fast.sort((a, b) => a.start.localeCompare(b.start) || a.epg_id - b.epg_id);
           const result: DayResult = {
@@ -270,13 +250,12 @@ export class HistoryService extends Context.Service<
             (!channel || resolved.details.channel === channel)
         );
 
-        const verifyCdn = ageDays > RECENT_DAYS;
         const items = yield* Effect.forEach(
           candidates,
           (candidate) =>
             Effect.gen(function* () {
               const details = candidate.details;
-              const playable = verifyCdn ? yield* verifyMaster(candidate.url) : true;
+              const playable = yield* verifyMaster(candidate.url);
               return {
                 epg_id: details.id,
                 title: details.title,
@@ -309,63 +288,17 @@ export class HistoryService extends Context.Service<
         if (cached) return cached;
 
         const anchor = yield* getAnchor;
-
-        const isPlayable = (daysAgo: number): Effect.Effect<boolean> =>
-          Effect.gen(function* () {
-            const mid = anchor.id - daysAgo * IDS_PER_DAY - Math.floor(IDS_PER_DAY / 2);
-            for (const offset of [-35, 0, 35]) {
-              const info = yield* probeNear(mid + offset);
-              if (info && (yield* verifyMaster(info.url))) return true;
-            }
-            return false;
-          });
-
-        let lo = 1;
-        let hi = MAX_BACK_DAYS;
-        let lastPlayable = 1;
-        while (lo <= hi) {
-          const mid = Math.floor((lo + hi) / 2);
-          if (yield* isPlayable(mid)) {
-            lastPlayable = mid;
-            lo = mid + 1;
-          } else {
-            hi = mid - 1;
-          }
-        }
-
-        const earliest = addDays(anchor.date, -lastPlayable);
+        const earliest = addDays(anchor.date, -MAX_LISTING_DAYS);
         const result: HistoryRange = {
           earliest,
           latest: anchor.date,
-          days: daysBetween(earliest, anchor.date) + 1,
+          days: MAX_LISTING_DAYS + 1,
         };
         yield* cache.set("history:range", result);
         return result;
       });
 
-      const fetchPrev = Effect.fnUntraced(function* (before: string, channel?: string) {
-        if (!DATE_RE.test(before)) {
-          return yield* ProxyError.from("invalid date, use YYYY-MM-DD", 400);
-        }
-        const anchor = yield* getAnchor;
-        const range = yield* fetchRange();
-        if (before > anchor.date) {
-          return yield* ProxyError.from(`date ${before} is after the newest program`, 400);
-        }
-        const { earliest } = range;
-
-        let date = addDays(before, -1);
-        while (date >= earliest) {
-          const day = yield* fetchDay(date, channel);
-          if (day.items.some((item) => item.playable)) {
-            return { date, earliest, items: day.items, end: false } satisfies PrevResult;
-          }
-          date = addDays(date, -1);
-        }
-        return { date: null, earliest, items: [], end: true } satisfies PrevResult;
-      });
-
-      return HistoryService.of({ fetchDay, fetchRange, fetchPrev });
+      return HistoryService.of({ fetchDay, fetchRange });
     })
   );
 }

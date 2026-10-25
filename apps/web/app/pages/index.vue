@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
-import type { ScheduleItem } from "~/utils/api";
 import { useApi } from "~/composables/useApi";
 import { usePlayer } from "~/composables/usePlayer";
 import { useReplayForChannel } from "~/composables/useReplayFeed";
@@ -81,11 +80,15 @@ watch(sentinel, (element) => {
 
 onMounted(async () => {
   try {
-    const data = await api.channels();
-    channels.value = data.channels ?? [];
+    const entries = await api.catalog();
+    const live = entries
+      .filter((entry) => entry.url.includes("/live/"))
+      .map((entry) => /\/live\/([^/]+)\.m3u8/.exec(entry.url)?.[1] ?? "")
+      .filter((slug) => slug !== "");
+    channels.value = live;
     if (channels.value.length) playChannel(channels.value[0]!, api);
   } catch (cause) {
-    loadError.value = `API unreachable: ${(cause as Error).message}`;
+    loadError.value = `Player API unreachable: ${(cause as Error).message}`;
   }
 });
 

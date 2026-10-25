@@ -9,7 +9,9 @@ export default defineHandler((event) => {
   const ifModifiedSince = event.req.headers.get("if-modified-since");
   const encoded = event.context.params?._ ?? "";
   return respond(
-    Routes.use((routes) => routes.asset(encoded, { range, ifNoneMatch, ifModifiedSince })).pipe(
+    Routes.use((routes) =>
+      routes.asset(encoded, { range, ifNoneMatch, ifModifiedSince })
+    ).pipe(
       Effect.map((served) => {
         if ("redirect" in served) {
           return new Response(null, { status: 302, headers: { location: served.redirect } });

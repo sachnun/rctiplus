@@ -20,7 +20,6 @@ export type Schedule = {
   readonly items: ReadonlyArray<ScheduleItem>;
 };
 
-/** capture groups: (channel, epg_id, slug, date, title, start, end) */
 const SCHEDULE_RE =
   /clickCatchup\(\s*'https:\/\/www\.rctiplus\.com\/tv\/(rcti|mnctv|gtv|inews)\/(\d+)\/([a-z0-9-]+)\?date=([0-9-]+)'[^>]*>\s*<h2>\s*([^<]+?)\s*<\/h2>\s*<br>\s*<h4>\s*([0-9:]+)\s*-\s*([0-9:]+)\s*<\/h4>/gs;
 
@@ -33,7 +32,6 @@ const ENTITIES: Record<string, string> = {
   nbsp: " ",
 };
 
-/** Decode the handful of HTML entities RCTI+ pages use in titles. */
 export function decodeEntities(input: string): string {
   return input.replace(/&(?:([a-z]+)|#(\d+)|#x([0-9a-f]+));/gi, (match, name, dec, hex) => {
     if (dec) return String.fromCodePoint(Number(dec));
@@ -42,7 +40,6 @@ export function decodeEntities(input: string): string {
   });
 }
 
-/** Parse catch-up entries out of the server-rendered channel page. */
 export function parseSchedule(html: string, channel: string): ScheduleItem[] {
   const items: ScheduleItem[] = [];
   for (const match of html.matchAll(SCHEDULE_RE)) {
@@ -64,14 +61,6 @@ export function parseSchedule(html: string, channel: string): ScheduleItem[] {
   return items;
 }
 
-/**
- * 7-day catch-up schedule scraper.
- *
- * The desktop TV page renders the full catch-up window server-side; each
- * program is an anchor with an `onclick="...; clickCatchup('...')"` handler.
- * The official ajax endpoint returns empty when called externally, so the
- * page is parsed instead.
- */
 export class ScheduleService extends Context.Service<
   ScheduleService,
   {

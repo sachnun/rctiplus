@@ -1,6 +1,5 @@
 import { Schema } from "effect";
 
-/** Upstream failure carrying the HTTP status the proxy should answer with. */
 export class ProxyError extends Schema.TaggedError<ProxyError>()("ProxyError", {
   message: Schema.String,
   status: Schema.Number,
@@ -10,7 +9,6 @@ export class ProxyError extends Schema.TaggedError<ProxyError>()("ProxyError", {
   }
 }
 
-/** A request that does not match any known route. */
 export class NotFound extends Schema.TaggedError<NotFound>()("NotFound", {
   message: Schema.String,
 }) {}

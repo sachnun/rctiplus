@@ -52,10 +52,21 @@ const run = <A, E>(effect: Effect.Effect<A, E, Routes>) =>
   Effect.runPromise(Effect.provide(effect.pipe(Effect.provide(AppLayer)), AppLayer));
 
 describe("routes", () => {
-  test("serves the channel list without touching the network", async () => {
-    const channels = await run(Routes.use((routes) => routes.channels));
-    expect(channels).toEqual({ channels: ["rcti", "mnctv", "gtv", "inews"] });
-    expect(calls).toHaveLength(0);
+  test("lists live channels first in the catalog", async () => {
+    const body = await run(Routes.use((routes) => routes.catalog()));
+    const text = String(body.body);
+    expect(text.startsWith("#EXTM3U")).toBe(true);
+    expect(text).toContain("#EXTINF:-1,RCTI\n/live/rcti.m3u8");
+    expect(text).toContain("#EXTINF:-1,MNCTV\n/live/mnctv.m3u8");
+    expect(body.headers["Content-Type"]).toBe("audio/x-mpegurl");
+  });
+
+  test("still serves live entries when the replay day cannot be resolved", async () => {
+    const body = await run(Routes.use((routes) => routes.catalog()));
+    const text = String(body.body);
+    expect(text).toContain("/live/inews.m3u8");
+    expect(text).not.toContain("/replay/");
+    expect(text.trimEnd().endsWith("/live/inews.m3u8")).toBe(true);
   });
 
   test("rejects unknown channels with a 404", async () => {
@@ -83,33 +94,25 @@ describe("routes", () => {
     expect(String(body.body)).toContain("/h/");
   });
 
-  test("serves the schedule as JSON", async () => {
-    const schedule = (await run(Routes.use((routes) => routes.schedule("rcti")))) as {
-      items: ReadonlyArray<{ epg_id: number }>;
-    };
-    expect(schedule.items[0]?.epg_id).toBe(328332);
+  test("serves a day listing as a playlist", async () => {
+    const body = await run(Routes.use((routes) => routes.day("2026-07-29", "rcti")));
+    const text = String(body.body);
+    expect(text).toContain("#EXTINF:-1,00:15-01:30 Si Cantik");
+    expect(text).toContain("/replay/328332.m3u8");
   });
 
-  test("serves a day listing from the schedule fast path", async () => {
-    const day = (await run(Routes.use((routes) => routes.historyDay("2026-07-29", "rcti")))) as {
-      items: ReadonlyArray<{ playable: boolean }>;
-    };
-    expect(day.items.length).toBe(1);
-    expect(day.items[0]?.playable).toBe(true);
-  });
-
-  test("rejects an invalid history date with a 400", async () => {
+  test("rejects an invalid day date with a 400", async () => {
     const error = await Effect.runPromise(
-      Effect.flip(
-        Routes.use((routes) => routes.historyDay("2026-7-29")).pipe(Effect.provide(AppLayer))
-      )
+      Effect.flip(Routes.use((routes) => routes.day("2026-7-29")).pipe(Effect.provide(AppLayer)))
     );
     expect(error.status).toBe(400);
   });
 
-  test("rejects unknown channels on the schedule route", async () => {
+  test("rejects unknown channels on the day route", async () => {
     const error = await Effect.runPromise(
-      Effect.flip(Routes.use((routes) => routes.schedule("nope")).pipe(Effect.provide(AppLayer)))
+      Effect.flip(
+        Routes.use((routes) => routes.day("2026-07-29", "nope")).pipe(Effect.provide(AppLayer))
+      )
     );
     expect(error.status).toBe(404);
   });

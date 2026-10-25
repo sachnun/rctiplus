@@ -1,8 +1,8 @@
 import { defineHandler } from "nitro";
 export default defineHandler((event) => {
   const pathname = event.url.pathname;
-  if (pathname === "/v1" || pathname.startsWith("/v1/")) {
-    return new Response("unknown endpoint", { status: 404 });
+  if (pathname === "/live" || pathname === "/live/") {
+    return new Response("usage: /live/{rcti|mnctv|gtv|inews}.m3u8", { status: 404 });
   }
   return new Response(`unknown route: ${pathname}`, { status: 404 });
 });

@@ -1,14 +1,10 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import type { ScheduleItem } from "~/utils/api";
+import type { ReplayItem } from "~/utils/api";
 import { addDays, titleSimilarity } from "~/utils/format";
-import type { ReplaySection } from "./useReplayFeed";
+import type { DaySection } from "~/utils/api";
 
-/**
- * Auto-continue: when a replay program ends, jump to the same program (title)
- * on the next day when it exists, else fall back to the live channel.
- */
 export function useAutoContinue(options: {
-  sections: { value: ReplaySection[] };
+  sections: { value: DaySection[] };
   activeEpgId: { value: number | null };
   onNext(epgId: number, title: string): void;
   onLive(): void;
@@ -16,20 +12,20 @@ export function useAutoContinue(options: {
   const { sections, activeEpgId, onNext, onLive } = options;
   const enabled = ref(true);
 
-  const current = computed<ScheduleItem | null>(() => {
+  const current = computed<ReplayItem | null>(() => {
     if (activeEpgId.value === null) return null;
     for (const section of sections.value) {
-      const hit = section.items.find((item) => item.epg_id === activeEpgId.value);
+      const hit = section.items.find((item) => item.epgId === activeEpgId.value);
       if (hit) return hit;
     }
     return null;
   });
 
-  function pickNext(program: ScheduleItem): ScheduleItem | null {
-    const nextDate = addDays(program.date, 1);
+  function pickNext(program: ReplayItem, date: string): ReplayItem | null {
+    const nextDate = addDays(date, 1);
     if (!nextDate) return null;
 
-    let best: ScheduleItem | null = null;
+    let best: ReplayItem | null = null;
     let bestSimilarity = 0;
     let bestSlot = false;
     for (const section of sections.value) {
@@ -52,6 +48,15 @@ export function useAutoContinue(options: {
     return best;
   }
 
+  
+  function activeDate(): string {
+    if (activeEpgId.value === null) return "";
+    for (const section of sections.value) {
+      if (section.items.some((item) => item.epgId === activeEpgId.value)) return section.date;
+    }
+    return "";
+  }
+
   function handleEnded(): void {
     if (!enabled.value) return;
     const program = current.value;
@@ -59,18 +64,17 @@ export function useAutoContinue(options: {
       onLive();
       return;
     }
-    const next = pickNext(program);
+    const next = pickNext(program, activeDate());
     if (!next) {
       onLive();
       return;
     }
-    onNext(next.epg_id, next.title);
+    onNext(next.epgId, next.title);
   }
 
   return { enabled, current, pickNext, handleEnded };
 }
 
-/** Remote-friendly directional focus movement over `[data-focusable]` nodes. */
 export function useSpatialFocus(root: { value: HTMLElement | null }) {
   function focusables(): HTMLElement[] {
     if (!root.value) return [];
@@ -116,7 +120,6 @@ export function useSpatialFocus(root: { value: HTMLElement | null }) {
   return { move, focusables };
 }
 
-/** Key handling for the TV remote, wired on mount and torn down on unmount. */
 export function useRemoteKeys(handlers: {
   onMove(direction: "up" | "down" | "left" | "right"): boolean;
   onBack(): void;
@@ -146,7 +149,6 @@ export function useRemoteKeys(handlers: {
   onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true));
 }
 
-/** Fullscreen handling, app-wide so the HUD and panel stay reachable. */
 export function useFullscreen(target: { value: HTMLElement | null }) {
   const active = ref(false);
 

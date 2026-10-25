@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { ReplaySection } from "~/composables/useReplayFeed";
+import type { DaySection } from "~/utils/api";
 import { formatDate } from "~/utils/format";
 
 defineProps<{
-  sections: readonly ReplaySection[];
+  sections: readonly DaySection[];
   activeEpgId: number | null;
   loading: boolean;
   done: boolean;
@@ -23,12 +23,12 @@ const emit = defineEmits<{ select: [epgId: number, title: string] }>();
       <div class="section-label replay-date">{{ formatDate(section.date) }}</div>
       <button
         v-for="item in section.items"
-        :key="item.epg_id"
+        :key="item.epgId"
         type="button"
         data-focusable
         class="row focusable"
-        :class="{ active: item.epg_id === activeEpgId }"
-        @click="emit('select', item.epg_id, item.title)"
+        :class="{ active: item.epgId === activeEpgId }"
+        @click="emit('select', item.epgId, item.title)"
       >
         <span class="time">{{ item.start }}-{{ item.end }}</span>
         <span class="title">{{ item.title }}</span>

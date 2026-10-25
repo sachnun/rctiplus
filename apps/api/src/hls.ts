@@ -3,22 +3,20 @@ import { CONFIG, type ChannelSlug } from "./config.js";
 import { Cache } from "./cache.js";
 import { ProxyError } from "./errors.js";
 import { RctiApi } from "./rctiplus.js";
+import { liveUrl } from "./urls.js";
 
-/** A body plus headers the router can hand straight to the runtime. */
 export type ProxiedBody = {
   body: string | Uint8Array | ReadableStream<Uint8Array> | null;
   headers: Record<string, string>;
   status?: number;
 };
 
-/** Optional quality pin for a served master playlist. */
 export type QualityFilter =
   | { readonly mode: "best" }
   | { readonly mode: "max-height"; readonly height: number };
 
 type Variant = { inf: string; url: string; height: number };
 
-/** Parse `#EXT-X-STREAM-INF` / URL pairs out of a master playlist. */
 export function parseVariants(body: string): Variant[] {
   const lines = body.split("\n");
   const variants: Variant[] = [];
@@ -33,10 +31,32 @@ export function parseVariants(body: string): Variant[] {
   return variants;
 }
 
-/**
- * Reduce a master playlist to a single variant matching the filter. Returns
- * the body unchanged when the playlist has no variants to filter.
- */
+export function dedupeMaster(body: string): string {
+  const lines = body.split("\n");
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const inf = (lines[i] ?? "").trim();
+    if (!inf.startsWith("#EXT-X-STREAM-INF:")) {
+      out.push(lines[i] ?? "");
+      continue;
+    }
+    const url = (lines[i + 1] ?? "").trim();
+    if (!url || url.startsWith("#")) {
+      out.push(lines[i] ?? "");
+      continue;
+    }
+    const res = /RESOLUTION=(\d+x\d+)/.exec(inf)?.[1] ?? "";
+    const bandwidth = /BANDWIDTH=(\d+)/.exec(inf)?.[1] ?? "";
+    const key = `${res}|${bandwidth}`;
+    i += 1;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(lines[i - 1] ?? "", lines[i] ?? "");
+  }
+  return out.join("\n");
+}
+
 export function filterMaster(body: string, filter: QualityFilter): string {
   const variants = parseVariants(body);
   if (variants.length === 0) return body;
@@ -47,7 +67,6 @@ export function filterMaster(body: string, filter: QualityFilter): string {
   return ["#EXTM3U", "#EXT-X-VERSION:3", keep.inf, keep.url].join("\n");
 }
 
-/** Optional request headers that influence how an asset is served. */
 export type AssetRequest = {
   range?: string | null;
   ifNoneMatch?: string | null;
@@ -62,7 +81,24 @@ type PlaylistData = {
   expires?: string;
 };
 
-/** UTF-8 to base64url (URL-safe, no padding). */
+const ASSET_EXTENSIONS = ["ts", "m4s", "mp4", "m4a", "aac", "key", "m3u8"] as const;
+
+export function assetPath(target: string): string {
+  let suffix = "";
+  try {
+    const path = new URL(target).pathname;
+    const ext = /\.([a-z0-9]+)$/i.exec(path)?.[1]?.toLowerCase();
+    if (ext && (ASSET_EXTENSIONS as readonly string[]).includes(ext)) suffix = `.${ext}`;
+  } catch {
+    suffix = "";
+  }
+  return `/h/${b64(target)}${suffix}`;
+}
+
+export function assetTarget(encoded: string): string {
+  return unb64(encoded.replace(/\.(?:ts|m4s|mp4|m4a|aac|key|m3u8)$/i, ""));
+}
+
 export function b64(input: string): string {
   const bytes = new TextEncoder().encode(input);
   let binary = "";
@@ -70,7 +106,6 @@ export function b64(input: string): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-/** base64url to UTF-8. */
 export function unb64(input: string): string {
   const binary = atob(input.replace(/-/g, "+").replace(/_/g, "/"));
   const bytes = new Uint8Array(binary.length);
@@ -78,10 +113,6 @@ export function unb64(input: string): string {
   return new TextDecoder().decode(bytes);
 }
 
-/**
- * Parse a single `Range` header (`bytes=a-b`, `bytes=a-`, `bytes=-n`) against
- * a known size. Returns null for unsatisfiable/unparseable ranges.
- */
 export function parseRange(header: string, size: number): [number, number] | null {
   const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
   if (!match || size === 0) return null;
@@ -103,7 +134,6 @@ export function parseRange(header: string, size: number): [number, number] | nul
   return [start, end];
 }
 
-/** RFC 7232 conditional check: If-None-Match wins over If-Modified-Since. */
 export function isNotModified(
   cond: AssetRequest,
   data: Pick<PlaylistData, "etag" | "lastModified">
@@ -124,17 +154,34 @@ export function isNotModified(
   return false;
 }
 
-/** Channel slug for a CDN host (`rcti-linier...` becomes `rcti`), or null. */
 export function channelForHost(hostname: string): ChannelSlug | null {
   const hit = CONFIG.cdnChannelHosts.find(([host]) => hostname.startsWith(host));
   return hit ? hit[1] : null;
 }
 
-/**
- * CDN proxy: fetch HLS playlists/segments from `*.rctiplus.id` with the
- * Referer header the CDN ACL demands, and rewrite every inner URL to go
- * through this proxy so VLC (which sends no Referer) can play them.
- */
+export function channelForUrl(url: string): ChannelSlug | null {
+  try {
+    const parsed = new URL(url);
+    const fromHost = channelForHost(parsed.hostname);
+    if (fromHost) return fromHost;
+    const fromPath = CONFIG.livePathRe.exec(parsed.pathname)?.[1];
+    if (!fromPath) return null;
+    const id = CONFIG.channels[fromPath as ChannelSlug];
+    return id === undefined ? null : (fromPath as ChannelSlug);
+  } catch {
+    return null;
+  }
+}
+
+export function hasSignedToken(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return CONFIG.tokenQueryKeys.some((key) => parsed.searchParams.has(key));
+  } catch {
+    return false;
+  }
+}
+
 export class CdnProxy extends Context.Service<
   CdnProxy,
   {
@@ -175,7 +222,7 @@ export class CdnProxy extends Context.Service<
           .map((line) => {
             const trimmed = line.trim();
             if (trimmed === "" || trimmed.startsWith("#")) return line;
-            return "/h/" + b64(new URL(trimmed, baseUrl).toString());
+            return assetPath(new URL(trimmed, baseUrl).toString());
           })
           .join("\n");
 
@@ -226,7 +273,8 @@ export class CdnProxy extends Context.Service<
         const headers = playlistHeaders(data);
         if (isNotModified(opts, data)) return { body: null, headers, status: 304 };
 
-        const body = opts.filter ? filterMaster(data.body, opts.filter) : data.body;
+        const master = dedupeMaster(data.body);
+        const body = opts.filter ? filterMaster(master, opts.filter) : master;
         return { body: rewritePlaylist(body, url), headers } satisfies ProxiedBody;
       });
 
@@ -301,17 +349,13 @@ export class CdnProxy extends Context.Service<
         return serveRange(buffer, baseHeaders, opts.range);
       });
 
+      
       const selfHeal = Effect.fnUntraced(function* (url: string) {
-        if (!/\/hdntl=/.test(url) || !/\.m3u8/i.test(url)) return null;
-
-        let channel: ChannelSlug = "rcti";
-        try {
-          channel = channelForHost(new URL(url).hostname) ?? channel;
-        } catch {
-          channel = "rcti";
-        }
+        if (!/\.m3u8/i.test(url) || !hasSignedToken(url)) return null;
+        const channel = channelForUrl(url);
+        if (!channel) return null;
         yield* api.invalidateLive(CONFIG.channels[channel]);
-        return `/${channel}.m3u8`;
+        return liveUrl(channel);
       });
 
       return CdnProxy.of({ rewritePlaylist, serveMaster, handleAsset, selfHeal });

@@ -1,10 +1,12 @@
 import { Context, Effect, Layer } from "effect";
-import { CONFIG } from "./config.js";
+import { absolutize, buildPlaylist, playlistHeaders, slotName, type CatalogEntry } from "./catalog.js";
+import { channelId, playerChannels } from "./config.js";
 import { ProxyError } from "./errors.js";
-import { CdnProxy, type ProxiedBody, type QualityFilter, unb64 } from "./hls.js";
+import { assetTarget, CdnProxy, type ProxiedBody, type QualityFilter } from "./hls.js";
 import { RctiApi } from "./rctiplus.js";
-import { ScheduleService } from "./schedule.js";
 import { HistoryService } from "./history.js";
+import { dayUrl, liveUrl, replayUrl } from "./urls.js";
+import { previousDate } from "./catalog.js";
 
 export type AssetRequest = {
   range?: string | null;
@@ -12,28 +14,10 @@ export type AssetRequest = {
   ifModifiedSince?: string | null;
 };
 
-/** Displayed channels (first slug per channel id, dedupes the gtv alias). */
-export function playerChannels(): string[] {
-  const seen = new Set<number>();
-  const out: string[] = [];
-  for (const [slug, id] of Object.entries(CONFIG.channels)) {
-    if (seen.has(id)) continue;
-    seen.add(id);
-    out.push(slug);
-  }
-  return out;
-}
+export { channelId, playerChannels };
 
-/** Validate a channel slug and return its API id, or undefined if unknown. */
-export function channelId(slug: string): number | undefined {
-  return CONFIG.channels[slug.toLowerCase() as keyof typeof CONFIG.channels];
-}
+export { catalogUrl, dayUrl, liveUrl, replayUrl } from "./urls.js";
 
-/**
- * Map a `?quality=` value to a proxy-side variant filter. `auto`/absent keeps
- * the full master; `best` pins the highest variant; a number keeps the highest
- * variant at or below that height.
- */
 export function qualityFilter(quality: string | undefined): QualityFilter | undefined {
   if (!quality || quality === "auto") return undefined;
   if (quality === "best") return { mode: "best" };
@@ -42,17 +26,14 @@ export function qualityFilter(quality: string | undefined): QualityFilter | unde
   return undefined;
 }
 
-/** HTTP surface of the proxy, independent of the server runtime. */
 export class Routes extends Context.Service<
   Routes,
   {
-    channels: Effect.Effect<{ channels: ReadonlyArray<string> }>;
-    schedule(channel: string): Effect.Effect<unknown, ProxyError>;
-    historyDay(date: string, channel?: string): Effect.Effect<unknown, ProxyError>;
-    historyPrev(before: string, channel?: string): Effect.Effect<unknown, ProxyError>;
-    historyRange: Effect.Effect<unknown, ProxyError>;
+    catalog(quality?: string, origin?: string): Effect.Effect<ProxiedBody, ProxyError>;
     live(channel: string, quality?: string): Effect.Effect<ProxiedBody, ProxyError>;
     replay(epgId: string, quality?: string): Effect.Effect<ProxiedBody, ProxyError>;
+    day(date: string, channel?: string): Effect.Effect<ProxiedBody, ProxyError>;
+    days(channel?: string): Effect.Effect<ProxiedBody, ProxyError>;
     asset(
       encoded: string,
       request: AssetRequest
@@ -64,13 +45,42 @@ export class Routes extends Context.Service<
     Effect.gen(function* () {
       const api = yield* RctiApi;
       const cdn = yield* CdnProxy;
-      const schedule = yield* ScheduleService;
       const history = yield* HistoryService;
 
       const ensureChannel = (slug: string): Effect.Effect<string, ProxyError> =>
         channelId(slug) === undefined
           ? ProxyError.from(`unknown channel: ${slug}`, 404)
           : Effect.succeed(slug);
+
+      const asCatalog = (
+        entries: ReadonlyArray<CatalogEntry>,
+        origin?: string
+      ): ProxiedBody => {
+        const body = buildPlaylist(entries);
+        return { body: origin ? absolutize(body, origin) : body, headers: playlistHeaders() };
+      };
+
+      
+      const catalog = Effect.fnUntraced(function* (quality?: string, origin?: string) {
+        const entries: CatalogEntry[] = playerChannels().map((channel) => ({
+          name: channel.toUpperCase(),
+          url: liveUrl(channel, quality),
+        }));
+
+        const today = new Date().toISOString().slice(0, 10);
+        const day = yield* history
+          .fetchDay(today, "rcti")
+          .pipe(Effect.orElseSucceed(() => null));
+
+        for (const item of day?.items ?? []) {
+          if (!item.playable) continue;
+          entries.push({
+            name: slotName(item.title, item.start, item.end),
+            url: replayUrl(item.epg_id, quality),
+          });
+        }
+        return asCatalog(entries, origin);
+      });
 
       const live = Effect.fnUntraced(function* (channel: string, quality?: string) {
         const slug = yield* ensureChannel(channel);
@@ -86,8 +96,33 @@ export class Routes extends Context.Service<
         return yield* cdn.serveMaster(master, { filter: qualityFilter(quality) });
       });
 
+      const day = Effect.fnUntraced(function* (date: string, channel?: string) {
+        const slug = channel && channel !== "all" ? yield* ensureChannel(channel) : undefined;
+        const result = yield* history.fetchDay(date, slug);
+        return asCatalog(
+          result.items
+            .filter((item) => item.playable)
+            .map((item) => ({
+              name: slotName(item.title, item.start, item.end),
+              url: replayUrl(item.epg_id),
+            }))
+        );
+      });
+
+      
+      const days = Effect.fnUntraced(function* (channel?: string) {
+        const slug = channel && channel !== "all" ? yield* ensureChannel(channel) : undefined;
+        const range = yield* history.fetchRange();
+        const entries: CatalogEntry[] = [];
+        for (let date = range.latest; date >= range.earliest; ) {
+          entries.push({ name: date, url: dayUrl(date, slug) });
+          date = previousDate(date);
+        }
+        return asCatalog(entries);
+      });
+
       const asset = Effect.fnUntraced(function* (encoded: string, request: AssetRequest) {
-        const url = unb64(encoded);
+        const url = assetTarget(encoded);
         return yield* cdn.handleAsset(url, request).pipe(
           Effect.catchTag("ProxyError", (error) =>
             Effect.gen(function* () {
@@ -100,23 +135,7 @@ export class Routes extends Context.Service<
         );
       });
 
-      return Routes.of({
-        channels: Effect.succeed({ channels: playerChannels() }),
-        schedule: (channel) =>
-          ensureChannel(channel).pipe(Effect.flatMap(() => schedule.fetchSchedule(channel))),
-        historyDay: (date, channel) =>
-          channel === undefined
-            ? history.fetchDay(date)
-            : ensureChannel(channel).pipe(Effect.flatMap(() => history.fetchDay(date, channel))),
-        historyPrev: (before, channel) =>
-          channel === undefined
-            ? history.fetchPrev(before)
-            : ensureChannel(channel).pipe(Effect.flatMap(() => history.fetchPrev(before, channel))),
-        historyRange: history.fetchRange(),
-        live,
-        replay,
-        asset,
-      });
+      return Routes.of({ catalog, live, replay, day, days, asset });
     })
   );
 }

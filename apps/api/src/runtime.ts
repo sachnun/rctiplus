@@ -6,18 +6,15 @@ type AppRuntime = ManagedRuntime.ManagedRuntime<Routes, Layer.Error<typeof AppLa
 
 let runtime: AppRuntime | undefined;
 
-/** Lazily build the Effect runtime shared by every request. */
 export function getRuntime(): AppRuntime {
   runtime ??= ManagedRuntime.make(AppLayer, { memoMap: Layer.makeMemoMapUnsafe() });
   return runtime;
 }
 
-/** Run a route effect, rejecting with the typed error on failure. */
 export function runRoute<A, E>(effect: Effect.Effect<A, E, Routes>): Promise<A> {
   return getRuntime().runPromise(effect);
 }
 
-/** Run a route effect and report the exit for error mapping at the edge. */
 export function runRouteExit<A, E>(effect: Effect.Effect<A, E, Routes>): Promise<Exit.Exit<A, E>> {
   return getRuntime().runPromiseExit(effect);
 }

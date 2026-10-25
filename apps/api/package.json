@@ -1,7 +1,7 @@
 {
   "name": "@rctiplus/api",
   "version": "3.0.0",
-  "description": "RCTI+ live TV + catch-up replay proxy (Nitro + Effect)",
+  "description": "RCTI+ live TV + catch-up replay worker, HLS playlists only",
   "private": true,
   "type": "module",
   "scripts": {

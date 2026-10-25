@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { createApiClient } from "../app/utils/api";
+import { createApiClient, epgIdOf } from "../app/utils/api";
+import { dateOf, parsePlaylist, splitSlot } from "../app/utils/playlist";
 import { shouldRestartOnPlay } from "../app/utils/player";
 import {
   addDays,
@@ -20,30 +21,67 @@ describe("resolveApiBase", () => {
   });
 });
 
+describe("parsePlaylist", () => {
+  const body = [
+    "#EXTM3U",
+    "#EXTINF:-1,RCTI",
+    "https://api.example.com/live/rcti.m3u8",
+    "#EXTINF:-1,00:15-01:30 Si Cantik",
+    "/replay/328332.m3u8",
+  ].join("\n");
+
+  test("reads names, notes and resolves relative URLs", () => {
+    const entries = parsePlaylist(body, "https://api.example.com/playlist.m3u8");
+    expect(entries).toEqual([
+      { name: "RCTI", url: "https://api.example.com/live/rcti.m3u8" },
+      { name: "00:15-01:30 Si Cantik", url: "https://api.example.com/replay/328332.m3u8" },
+    ]);
+  });
+
+  test("ignores comment-only lines", () => {
+    expect(parsePlaylist("#EXTM3U\n#EXT-X-VERSION:3\n", "https://a/")).toEqual([]);
+  });
+});
+
+describe("playlist helpers", () => {
+  test("splits a slot prefix off a program name", () => {
+    expect(splitSlot("00:15-01:30 Si Cantik")).toEqual({
+      start: "00:15",
+      end: "01:30",
+      title: "Si Cantik",
+    });
+    expect(splitSlot("RCTI")).toEqual({ start: "", end: "", title: "RCTI" });
+  });
+
+  test("reads the date and epg id out of catalog URLs", () => {
+    expect(dateOf("https://a/day/2026-05-01/rcti.m3u8")).toBe("2026-05-01");
+    expect(dateOf("https://a/live/rcti.m3u8")).toBe("");
+    expect(epgIdOf("https://a/replay/328332.m3u8")).toBe(328332);
+    expect(epgIdOf("https://a/live/rcti.m3u8")).toBe(0);
+  });
+});
+
 describe("createApiClient", () => {
   const api = createApiClient("https://api.example.com/");
 
   test("builds live stream URLs", () => {
-    expect(api.streamUrl("rcti")).toBe("https://api.example.com/rcti.m3u8");
+    expect(api.streamUrl("rcti")).toBe("https://api.example.com/live/rcti.m3u8");
   });
 
   test("builds replay URLs", () => {
     expect(api.replayUrl(328332)).toBe("https://api.example.com/replay/328332.m3u8");
   });
 
-  test("encodes JSON API query parameters", () => {
+  test("fetches listings as playlists", async () => {
     const urls: string[] = [];
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       urls.push(String(input));
-      return Response.json({ channel: "rcti", items: [] });
+      return new Response("#EXTM3U\n#EXTINF:-1,2026-05-01\n/day/2026-05-01/rcti.m3u8\n");
     }) as typeof fetch;
 
-    void api.schedule("rcti");
-    void api.historyPrev("2026-07-29", "mnctv");
-    expect(urls).toEqual([
-      "https://api.example.com/schedule?channel=rcti",
-      "https://api.example.com/history/prev?before=2026-07-29&channel=mnctv",
-    ]);
+    const days = await api.days("rcti");
+    expect(urls).toEqual(["https://api.example.com/days/rcti.m3u8"]);
+    expect(days).toEqual(["2026-05-01"]);
   });
 });
 
