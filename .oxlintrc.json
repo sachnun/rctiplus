@@ -1,8 +1,12 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "unicorn", "oxc", "vue"],
+  "jsPlugins": ["eslint-plugin-no-comments"],
   "categories": {
     "correctness": "error"
+  },
+  "rules": {
+    "no-comments/disallowComments": "error"
   },
   "ignorePatterns": ["**/.nuxt/**", "**/.nitro/**", "**/.output/**", "**/node_modules/**"]
 }

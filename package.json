@@ -16,6 +16,7 @@
     "deploy": "bun run --filter @rctiplus/api deploy"
   },
   "devDependencies": {
+    "eslint-plugin-no-comments": "^1.2.1",
     "oxlint": "^1.89.0",
     "typescript": "^5.9.3"
   }
